@@ -1,0 +1,64 @@
+name:                jupyter
+version:             1.0.0
+synopsis:            A library for creating and using Jupyter kernels.
+
+description:         An implementation of the Jupyter messaging protocol, used to implement Jupyter kernels in Haskell or communicate with existing Jupyter kernels via the messaging protocol.
+homepage:            http://github.com/gibiansky/haskell-jupyter
+license:             MIT
+license-file:        LICENSE
+author:              Andrew Gibiansky
+maintainer:          andrew.gibiansky@gmail.com
+
+category:            Development
+build-type:          Simple
+
+cabal-version:       >=1.16
+
+library
+  exposed-modules:     Jupyter.Kernel
+                       Jupyter.Kernel.Parser
+                       Jupyter.Kernel.ZeroMQ
+                       Jupyter.Messages
+                       Jupyter.Messages.Metadata
+                       Jupyter.UUID
+                       Jupyter.Install
+                       Jupyter.Install.Internal
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  build-depends:       base            >=4.6,
+                       aeson           >=0.6,
+                       bytestring      >=0.10,
+                       cereal          >=0.3,
+                       containers      >=0.5,
+                       directory       >=1.1,
+                       temporary       >=1.2,
+                       filepath        >=1.2,
+                       process         >=1.1,
+                       mtl             >=2.1,
+                       text            >=0.11,
+                       transformers    >=0.3,
+                       unordered-containers >= 0.2.5,
+                       uuid            >=1.3,
+                       zeromq4-haskell >=0.1,
+                       SHA             >=1.6,
+                       monad-control   >=1.0,
+                       async           >= 2.1.0
+
+test-suite test
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests
+  main-is: Test.hs
+  build-depends: base >= 4 && < 5,
+                 tasty >= 0.7,
+                 tasty-hunit >= 0.9,
+                 extra >= 1.4,
+                 directory >= 1.2,
+                 silently >= 1.2,
+                 aeson >= 0.6,
+                 bytestring >= 0.10,
+                 text >= 0.11,
+                 zeromq4-haskell >= 0.6,
+                 transformers >= 0.4,
+                 containers      >=0.5,
+                 jupyter
