@@ -16,23 +16,28 @@ The main entrypoint is the 'serve' function, which provides a type-safe implemen
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Kernel (
   -- * Defining a kernel
   CommHandler(..),
   ClientRequestHandler(..),
+  simpleKernelInfo,
+
   -- * Serving kernels
   serve,
   serveWithDynamicPorts,
+  KernelProfile(..),
+  readProfile,
   PublishCallbacks(..), 
   defaultClientRequestHandler,
   defaultCommHandler,
-  UnimplementedReply(..),
   ) where
 
 import           Control.Monad (forever, void)
 import           System.IO (hPutStrLn, stderr)
 import           Data.ByteString (ByteString)
 import           Control.Exception (Exception, throwIO)
+import Data.Text (Text)
 
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Control (liftBaseWith)
@@ -44,10 +49,38 @@ import           System.ZMQ4.Monadic (ZMQ, Socket, Rep, Router, Pub, async, rece
 import           Jupyter.Messages (Client, Message(..), messageHeader, KernelOutput, Comm,
                                    ClientRequest(..), KernelReply(..), pattern ExecuteOk,
                                    pattern InspectOk, pattern CompleteOk, CursorRange(..),
-                                   CodeComplete(..), CodeOffset(..))
+                                   CodeComplete(..), CodeOffset(..), ConnectInfo(..), KernelInfo(..),
+                                   LanguageInfo(..))
 import           Jupyter.Messages.Metadata (MessageHeader)
 import           Jupyter.Kernel.ZeroMQ (withJupyterSockets, JupyterSockets(..), sendMessage,
-                                        receiveMessage, KernelProfile(..))
+                                        receiveMessage, KernelProfile(..), readProfile)
+
+-- | Create the simplest possible 'KernelInfo'.
+--
+-- Defaults version numbers to \"0.0\", mimetype to \"text/plain\", empty banner, and a \".txt\"
+-- file extension.
+--
+-- Mostly intended for use in tutorials and demonstrations; if publishing production kernels, make
+-- sure to use the full 'KernelInfo' constructor.
+simpleKernelInfo :: Text -- ^ Kernel name, used for 'kernelImplementation' and 'languageName'.
+                 -> KernelInfo
+simpleKernelInfo kernelName =
+  KernelInfo
+    { kernelProtocolVersion = [5, 0]
+    , kernelBanner = ""
+    , kernelImplementation = kernelName
+    , kernelImplementationVersion = "0.0"
+    , kernelHelpLinks = []
+    , kernelLanguageInfo = LanguageInfo
+      { languageName = kernelName
+      , languageVersion = "0.0"
+      , languageMimetype = "text/plain"
+      , languageFileExtension = ".txt"
+      , languagePygmentsLexer = Nothing
+      , languageCodeMirrorMode = Nothing
+      , languageNbconvertExporter = Nothing
+      }
+    }
 
 
 -- | The 'PublishCallbacks' data type contains callbacks that the kernel may use to publish messages
@@ -77,7 +110,7 @@ data PublishCallbacks =
 --
 -- The 'defaultCommHandler' handler is provided for use with kernels that wish to ignore all 'Comm'
 -- messages.
-type CommHandler = (Comm -> IO ()) -> Comm -> IO ()
+type CommHandler = PublishCallbacks -> Comm -> IO ()
 
 -- | When calling 'serve', the caller must provide a 'ClientRequestHandler'.
 --
@@ -97,28 +130,29 @@ type ClientRequestHandler = PublishCallbacks -> ClientRequest -> IO KernelReply
 defaultCommHandler :: CommHandler
 defaultCommHandler _ _ = return ()
 
-data UnimplementedReply = UnimplementedReply { unimplementedReplyTo :: ClientRequest }
-  deriving (Eq, Ord, Show)
-
-instance Exception UnimplementedReply
-
 -- | Handler which responds to all 'ClientRequest' messages with a default, empty reply.
---
--- For requests where no default empty reply is possible ('KernelInfoRequest', 'ConnectRequest')
--- this throws an 'UnimplementedReply' exception.
-defaultClientRequestHandler :: ClientRequestHandler
-defaultClientRequestHandler _ req =
-  case req of
-    ExecuteRequest{} -> return $ ExecuteReply ExecuteOk 0
-    InspectRequest{} -> return $ InspectReply $ InspectOk Nothing
-    HistoryRequest{} -> return $ HistoryReply []
-    CompleteRequest _ (CodeOffset offset) ->
-      return $ CompleteReply $ CompleteOk [] (CursorRange offset offset) mempty
-    IsCompleteRequest{} -> return $ IsCompleteReply CodeUnknown
-    CommInfoRequest{} -> return $ CommInfoReply mempty
-    ShutdownRequest restart -> return $ ShutdownReply restart
-    message@KernelInfoRequest{} -> throwIO $ UnimplementedReply message
-    message@ConnectRequest{} -> throwIO $ UnimplementedReply message
+defaultClientRequestHandler :: KernelProfile -- ^ The profile this kernel is running on. Used to respond to 'ConnectRequest's.
+                            -> KernelInfo    -- ^ Information about this kernel. Used to respond to 'KernelInfoRequest's.
+                            -> ClientRequestHandler
+defaultClientRequestHandler KernelProfile{..} kernelInfo _ req =
+  return $
+    case req of
+      ExecuteRequest{} -> ExecuteReply ExecuteOk 0
+      InspectRequest{} -> InspectReply $ InspectOk Nothing
+      HistoryRequest{} -> HistoryReply []
+      CompleteRequest _ (CodeOffset offset) ->
+        CompleteReply $ CompleteOk [] (CursorRange offset offset) mempty
+      IsCompleteRequest{} -> IsCompleteReply CodeUnknown
+      CommInfoRequest{} -> CommInfoReply mempty
+      ShutdownRequest restart -> ShutdownReply restart
+      KernelInfoRequest{} -> KernelInfoReply kernelInfo
+      ConnectRequest{} -> ConnectReply
+                            ConnectInfo
+                              { connectShellPort = profileShellPort
+                              , connectIopubPort = profileIopubPort
+                              , connectHeartbeatPort = profileHeartbeatPort
+                              , connectStdinPort = profileStdinPort
+                              }
 
 -- | Indefinitely serve a kernel on the provided ports. If the ports are not open, fails with an
 -- exception.

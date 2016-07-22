@@ -241,7 +241,7 @@ createTestKernelspec tmp = do
     Kernelspec
       { kernelspecDisplayName = "Test"
       , kernelspecLanguage = "test"
-      , kernelspecCommand = \conn -> ["test", conn, "--test"]
+      , kernelspecCommand = \exe conn -> [exe, conn, "--test"]
       , kernelspecJsFile = Just kernelJsFile
       , kernelspecLogoFile = Just kernelLogoFile
       , kernelspecEnv = mempty

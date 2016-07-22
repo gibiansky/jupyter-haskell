@@ -1,3 +1,7 @@
 *.hi
 *.o
 .stack-work
+*.json
+*.ipynb
+env
+.ipynb_checkpoints

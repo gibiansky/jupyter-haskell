@@ -49,6 +49,12 @@ test-suite test
   type: exitcode-stdio-1.0
   hs-source-dirs: tests
   main-is: Test.hs
+
+  other-modules:    Jupyter.Test.Install
+                    Jupyter.Test.Kernel
+                    Jupyter.Test.ZeroMQ
+                    Utils
+
   build-depends: base >= 4 && < 5,
                  tasty >= 0.7,
                  tasty-hunit >= 0.9,
@@ -62,3 +68,10 @@ test-suite test
                  transformers >= 0.4,
                  containers      >=0.5,
                  jupyter
+
+executable kernel-basic
+    default-language:   Haskell2010
+    hs-source-dirs:     examples/basic
+    main-is:            Main.hs
+    build-depends:      base >= 4.6, 
+                        jupyter

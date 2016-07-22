@@ -188,7 +188,7 @@ withJupyterSockets mProfile callback = runZMQ $ do
         , profileShellPort = shellPort
         , profileStdinPort = stdinPort
         , profileIopubPort = iopubPort
-        , profileSignatureKey = ""
+        , profileSignatureKey = maybe "" profileSignatureKey mProfile
         }
 
   callback profile JupyterSockets { .. }

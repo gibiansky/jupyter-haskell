@@ -17,7 +17,7 @@ module Jupyter.Install.Internal where
 
 import           Control.Monad (forM_, void, unless, when)
 import           Data.Maybe (isJust)
-import           System.Environment (lookupEnv)
+import           System.Environment (lookupEnv, getExecutablePath)
 import           System.Directory (findExecutable, getTemporaryDirectory, removeDirectoryRecursive,
                                    createDirectoryIfMissing, copyFile, doesDirectoryExist, canonicalizePath)
 import           System.Process (readProcess)
@@ -39,10 +39,10 @@ data Kernelspec =
        Kernelspec
          { kernelspecDisplayName :: Text -- ^ Name for the kernel to be shown in frontends, e.g. \"Haskell\".
          , kernelspecLanguage :: Text    -- ^ Language name for the kernel, used to refer to this kernel (in command-line arguments, URLs, etc), e.g. "haskell".
-         , kernelspecCommand :: FilePath -> [String] -- ^ How to invoke the kernel. Given the path to the connection file, this function
+         , kernelspecCommand :: FilePath -> FilePath -> [String] -- ^ How to invoke the kernel. Given the path to the currently running executable and connection file, this function
             -- should return the full command to invoke the kernel. Example:
          --
-         -- > \connectionFile -> ["ihaskell", "kernel", "--debug", "--connection-file", connectionFile]
+         -- > \exe connectionFile -> [exe, "kernel", "--debug", "--connection-file", connectionFile]
          , kernelspecJsFile :: Maybe FilePath -- ^ (optional) path to a Javascript file (kernel.js) to provide to the Jupyter notebook.
          -- This file is loaded upon notebook startup.
          , kernelspecLogoFile :: Maybe FilePath -- ^ (optional) path to a 64x64 PNG file to display as the kernel logo in the notebook.
@@ -192,12 +192,13 @@ prepareKernelspecDirectory kernelspec dir = do
 
     -- Generate the kernel.json data structure from the Kernelspec datatype.
     generateKernelJSON :: Kernelspec -> IO ()
-    generateKernelJSON Kernelspec { .. } =
+    generateKernelJSON Kernelspec { .. } = do
+      exePath <- getExecutablePath
       withFile (dir ++ "/kernel.json") WriteMode $
         flip LBS.hPutStr $
           encode $
             object
-              [ "argv" .= kernelspecCommand "{connection_file}"
+              [ "argv" .= kernelspecCommand exePath "{connection_file}"
               , "display_name" .= kernelspecDisplayName
               , "language" .= kernelspecLanguage
               , "env" .= kernelspecEnv
@@ -212,7 +213,7 @@ installKernelspec :: InstallUser -- ^ Whether this kernel should be installed wi
                   -> IO ()
 installKernelspec installUser jupyterPath kernelspec = do
   tempDir <- getTemporaryDirectory
-  let kernelspecDir = tempDir ++ "/jupyter-kernel-kernelspec-dir"
+  let kernelspecDir = tempDir ++ "/" ++ T.unpack (kernelspecLanguage kernelspec)
   prepareKernelspecDirectory kernelspec kernelspecDir
 
   let userFlag =

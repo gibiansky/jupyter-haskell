@@ -138,9 +138,9 @@ shutdownRequestParser o = do
 
 commOpenParser :: Object -> Parser Comm
 commOpenParser o = CommOpen <$> o .: "comm_id"
+                            <*> o .: "data"
                             <*> o .: "target_name"
                             <*> o .:? "target_module"
-                            <*> o .: "data"
 
 commMsgParser :: Object -> Parser Comm
 commMsgParser o = CommMessage <$> o .: "comm_id" <*> o .: "data"

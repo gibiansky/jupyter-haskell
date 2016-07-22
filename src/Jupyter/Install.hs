@@ -18,6 +18,7 @@ creating a value of type 'Kernelspec' and can be installed with 'installKernel'.
 module Jupyter.Install (
   -- * Kernelspec Definitions
   Kernelspec(..),
+  simpleKernelspec,
 
   -- * Installing Jupyter Kernels
   installKernel,
@@ -25,4 +26,21 @@ module Jupyter.Install (
   InstallResult(..),
   ) where
 
+import Data.Text (Text)
+
 import Jupyter.Install.Internal 
+
+-- | Utility for creating simple kernelspecs, with all optional 'Kernelspec' fields initialized to their empty values.
+simpleKernelspec :: Text -- ^ The kernel display name (see 'kernelspecDisplayName').
+                 -> Text -- ^ The kernel language name (see 'kernelspecLanguage').
+                 -> (FilePath -> FilePath -> [String]) -- ^ The kernel command line invocation (see 'kernelspecCommand').
+                 -> Kernelspec
+simpleKernelspec displayName language command =
+    Kernelspec {
+        kernelspecDisplayName = displayName,
+        kernelspecLanguage = language,
+        kernelspecCommand = command,
+        kernelspecJsFile = Nothing,
+        kernelspecLogoFile = Nothing,
+        kernelspecEnv = mempty
+      }

@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Test.Kernel (kernelTests) where
 
-import           Control.Concurrent (newEmptyMVar, MVar, forkIO, putMVar, takeMVar)
+import           Control.Concurrent (newEmptyMVar, MVar, forkIO, putMVar, takeMVar, readMVar)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Monad (forM_)
 import qualified Data.Map as Map
@@ -34,8 +34,8 @@ testKernel = testCaseSteps "Simple Kernel" $ \step -> do
   step "Starting kernel..."
   profileVar <- newEmptyMVar
   clientMessageVar <- newEmptyMVar
-  forkIO $ serveWithDynamicPorts (putMVar profileVar) defaultCommHandler (reqHandler clientMessageVar)
-  profile <- takeMVar profileVar
+  forkIO $ serveWithDynamicPorts (putMVar profileVar) defaultCommHandler (reqHandler profileVar clientMessageVar)
+  profile <- readMVar profileVar
 
   runZMQ $ do
     liftIO $ step "Connecting to kernel..."
@@ -54,40 +54,30 @@ testKernel = testCaseSteps "Simple Kernel" $ \step -> do
       sendMessage "" shellClientSocket header msg
       received <- liftIO $ takeMVar clientMessageVar
       liftIO $ msg @=? received
-
-    liftIO $ step "Checking kernel reply encoding / decoding..."
   where
-    reqHandler :: MVar ClientRequest -> ClientRequestHandler
-    reqHandler clientMessageVar cb req = do
+    kernelInfo :: KernelInfo
+    kernelInfo = KernelInfo
+      { kernelProtocolVersion = [1, 2, 3]
+      , kernelBanner = "Banner"
+      , kernelImplementation = "kernel"
+      , kernelImplementationVersion = "1.0.0"
+      , kernelHelpLinks = []
+      , kernelLanguageInfo = LanguageInfo
+        { languageName = "Test"
+        , languageVersion = "1.0.0"
+        , languageMimetype = "text/plain"
+        , languageFileExtension = ".txt"
+        , languagePygmentsLexer = Nothing
+        , languageCodeMirrorMode = Nothing
+        , languageNbconvertExporter = Nothing
+        }
+      }
+
+    reqHandler :: MVar KernelProfile -> MVar ClientRequest -> ClientRequestHandler
+    reqHandler profileVar clientMessageVar cb req = do
       putMVar clientMessageVar req
-      case req of
-        KernelInfoRequest{} ->
-          return $ KernelInfoReply
-                     KernelInfo
-                       { kernelProtocolVersion = [1, 2, 3]
-                       , kernelBanner = "Banner"
-                       , kernelImplementation = "kernel"
-                       , kernelImplementationVersion = "1.0.0"
-                       , kernelHelpLinks = []
-                       , kernelLanguageInfo = LanguageInfo
-                         { languageName = "Test"
-                         , languageVersion = "1.0.0"
-                         , languageMimetype = "text/plain"
-                         , languageFileExtension = ".txt"
-                         , languagePygmentsLexer = Nothing
-                         , languageCodeMirrorMode = Nothing
-                         , languageNbconvertExporter = Nothing
-                         }
-                       }
-        ConnectRequest{} ->
-          return $ ConnectReply
-                     ConnectInfo
-                       { connectShellPort = 1000
-                       , connectIopubPort = 1001
-                       , connectStdinPort = 1002
-                       , connectHeartbeatPort = 1003
-                       }
-        _ -> defaultClientRequestHandler cb req
+      profile <- readMVar profileVar
+      defaultClientRequestHandler profile kernelInfo cb req
 
     clientMessages = [ ExecuteRequest (CodeBlock "1 + 1")
                          ExecuteOptions

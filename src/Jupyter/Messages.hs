@@ -945,7 +945,7 @@ newtype TargetModule = TargetModule Text
 -- | 'Comm' messages provide developers with an unstructured communication channel between the
 -- kernel and the frontend which exists on both sides and can communicate in any direction.
 --
--- These messages are fully symmetrical - both the Kernel and the Frontend can send each message,
+-- These messages are fully symmetrical - both the kernel and the frontend can send each message,
 -- and no messages expect a reply.
 --
 -- Every @comm@ has an ID and a target name. The code handling the message on the receiving side
@@ -956,8 +956,7 @@ newtype TargetModule = TargetModule Text
 -- sides, until the comm is closed with a 'CommClose' message.
 --
 -- For more information on @comm@ messages, read the
--- <https://jupyter-client.readthedocs.io/en/latest/messaging.html#custom-messages section in the
--- Jupyter messaging spec>.
+-- <https://jupyter-client.readthedocs.io/en/latest/messaging.html#custom-messages section in the Jupyter messaging spec>.
 data Comm =
           -- | A @comm_open@ message used to request that the receiving end create a @comm@ with
           -- the provided UUID and target name.
@@ -972,7 +971,7 @@ data Comm =
           --
           -- The auxiliary JSON @data@ value can contain any information the client or kernel
           -- wishes to include for this @comm@ message.
-           CommOpen UUID TargetName (Maybe TargetModule) Value
+           CommOpen UUID Value TargetName (Maybe TargetModule)
           |
           -- | A @comm_close@ message destroys a @comm@, selecting it by its UUID.
           --
@@ -995,7 +994,7 @@ instance ToJSON Comm where
   toJSON comm =
     object $
       case comm of
-        CommOpen uuid targetName mTargetModule commData ->
+        CommOpen uuid commData targetName mTargetModule ->
           ["comm_id" .= uuid, "data" .= commData, "target_name" .= targetName] ++
           maybe [] (\targetModule -> ["target_module" .= targetModule]) mTargetModule
         CommClose uuid commData ->
