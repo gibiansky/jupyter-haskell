@@ -13,7 +13,8 @@ notebook or another frontend), take a look at [IHaskell](http://github.com/gibia
 ### Table of Contents
 
 - [What is Jupyter?](#what-is-jupyter)
-- [Installation](#install)
+- [Installation](#installation)
+    * [ZeroMQ Installation](#zeromq-installation)
 - [Intro to `jupyter`](#intro-to-jupyter)
 - [Creating Kernels](#creating-kernels)
     * [Registering the Kernel](#registering-the-kernel)
@@ -49,6 +50,35 @@ other IDE-like features. You can try using the notebook with an [online demo
 notebook](https://try.jupyter.org/).
 
 ![Jupyter notebook](http://jupyter.org/assets/jupyterpreview.png)
+
+## Installation
+
+`jupyter` can be installed similarly to most Haskell packages, either via `stack` or `cabal`:
+```
+# Stack (recommended)
+stack install jupyter
+
+# Cabal
+cabal install jupyter
+```
+
+### ZeroMQ Installation
+`jupyter` depends on the `zeromq4-haskell` package, which requires ZeroMQ to be installed. Depending
+on your platform, this may require compiling from source. If you use a Mac, it is recommended that
+you install Homebrew (if you have not installed it already) and use it to install ZeroMQ.
+
+Installation Commands:
+- **Mac OS X (Homebrew, recommended):** `brew install zeromq`
+- **Mac OS X (MacPorts):** `ports install zmq`
+- **Ubuntu:** `sudo apt-get install libzmq3-dev`
+- **Other:** Install ZeroMQ from source:
+```bash
+git clone git@github.com:zeromq/zeromq4-x.git libzmq
+cd libzmq
+./autogen.sh && ./configure && make
+sudo make install
+sudo ldconfig
+```
 
 ## Intro to `jupyter`
 
