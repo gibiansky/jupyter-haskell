@@ -49,6 +49,7 @@ Markdown documentation, code execution and autocompletion, and a variety of
 other IDE-like features. You can try using the notebook with an [online demo
 notebook](https://try.jupyter.org/).
 
+The following screenshots are examples of the Jupyter notebook, taken from [their website](http://jupyter.org):
 ![Jupyter notebook](http://jupyter.org/assets/jupyterpreview.png)
 
 ## Installation
