@@ -5,16 +5,19 @@ import           System.Environment (getArgs)
 import           System.Exit (exitFailure)
 import           System.IO (stderr)
 import qualified Data.Text.IO as T
+import           Control.Concurrent (newMVar)
 
 import           Jupyter.Install (installKernel, simpleKernelspec, InstallUser(..), InstallResult(..),
                                   Kernelspec)
 import           Jupyter.Kernel (readProfile, simpleKernelInfo, serve, defaultCommHandler,
                                  defaultClientRequestHandler, KernelProfile)
 
+import           Calculator.Handler (requestHandler)
+
 -- | In `main`, support two commands:
 --
---    - `kernel-basic install`: Register this kernel with Jupyter. 
---    - `kernel-basic kernel $FILE`: Serve a kernel given ports in connection file $FILE.
+--    - `kernel-calculator install`: Register this kernel with Jupyter. 
+--    - `kernel-calculator kernel $FILE`: Serve a kernel given ports in connection file $FILE.
 main :: IO ()
 main = do
   args <- getArgs
@@ -26,12 +29,12 @@ main = do
 -- | Register this kernel with Jupyter.
 runInstall :: IO ()
 runInstall =
-  installKernel InstallLocal basicKernelspec >>= handleInstallResult
+  installKernel InstallLocal calculatorKernelspec >>= handleInstallResult
   where
     -- A basic kernelspec with limited info.
-    basicKernelspec :: Kernelspec
-    basicKernelspec =
-      simpleKernelspec "Basic" "basic" $ \exe connect -> [exe, "kernel", connect]
+    calculatorKernelspec :: Kernelspec
+    calculatorKernelspec = 
+      simpleKernelspec "Calculator" "calculator" $ \exe connect -> [exe, "kernel", connect]
 
     -- Print an error message and exit with non-zero exit code if the install failed. 
     handleInstallResult :: InstallResult -> IO ()
@@ -46,5 +49,5 @@ runInstall =
 runKernel :: FilePath -> IO ()
 runKernel profilePath = do
   Just profile <- readProfile profilePath
-  serve profile defaultCommHandler $
-    defaultClientRequestHandler profile $ simpleKernelInfo "Basic"
+  execCountVar <- newMVar 1
+  serve profile defaultCommHandler $ requestHandler profile execCountVar

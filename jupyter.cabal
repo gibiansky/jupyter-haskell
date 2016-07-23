@@ -74,4 +74,13 @@ executable kernel-basic
     hs-source-dirs:     examples/basic
     main-is:            Main.hs
     build-depends:      base >= 4.6, 
+                        text >= 1.2,
+                        jupyter
+
+executable kernel-calculator
+    default-language:   Haskell2010
+    hs-source-dirs:     examples/calculator
+    main-is:            Main.hs
+    build-depends:      base >= 4.6, 
+                        text >= 1.2,
                         jupyter

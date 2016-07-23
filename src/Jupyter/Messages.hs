@@ -93,6 +93,7 @@ module Jupyter.Messages (
     KernelOutput(..),
     Stream(..),
     DisplayData(..),
+    displayPlain, displayLatex,
     ImageDimensions(..),
     MimeType(..),
     ErrorInfo(..),
@@ -172,12 +173,16 @@ messageHeader msg =
 -- For more information on each of these messages, view the appropriate section <https://jupyter-client.readthedocs.io/en/latest/messaging.html#messages-on-the-shell-router-dealer-sockets of the Jupyter messaging spec>.
 
 data ClientRequest =
-                   -- | This message type is used by frontends to ask the kernel to execute code on
+                   -- | Replied to with an 'ExecuteReply'.
+                   --
+                   -- This message type is used by frontends to ask the kernel to execute code on
                    -- behalf of the user, in a namespace reserved to the user’s variables (and thus
                    -- separate from the kernel’s own internal code and variables).
                     ExecuteRequest CodeBlock ExecuteOptions
                    |
-                   -- | Code can be inspected to show useful information to the user. It is up to
+                   -- | Replied to with an 'InspectReply'.
+                   --
+                   -- Code can be inspected to show useful information to the user. It is up to
                    -- the kernel to decide what information should be displayed, and its
                    -- formatting.
                    --
@@ -186,18 +191,24 @@ data ClientRequest =
                    -- this is used to show tooltips over function calls, etc.
                     InspectRequest CodeBlock CodeOffset DetailLevel
                    |
-                   -- | For clients to explicitly request history from a kernel. The kernel has all
+                   -- | Replied to with a 'HistoryReply'.
+                   --
+                   -- For clients to explicitly request history from a kernel. The kernel has all
                    -- the actual execution history stored in a single location, so clients can
                    -- request it from the kernel when needed.
                     HistoryRequest HistoryOptions
                    |
-                   -- | A message type for the client to request autocompletions from the kernel.
+                   -- | Replied to with a 'CompleteReply'.
+                   --
+                   -- A message type for the client to request autocompletions from the kernel.
                    --
                    -- The lexing is left to the kernel, and the only information provided is the
                    -- cell contents and the current cursor location in the cell.
                     CompleteRequest CodeBlock CodeOffset
                    |
-                   -- | When the user enters a line in a console style interface, the console must
+                   -- | Replied to with a 'IsCompleteReply'.
+                   --
+                   -- When the user enters a line in a console style interface, the console must
                    -- decide whether to immediately execute the current code, or whether to show a
                    -- continuation prompt for further input. For instance, in Python @a = 5@ would
                    -- be executed immediately, while for @i in range(5):@ would expect further
@@ -218,26 +229,34 @@ data ClientRequest =
                    -- sent for execution or forcing a continuation prompt.
                     IsCompleteRequest CodeBlock
                    |
-                   -- | When a client connects to the request/reply socket of the kernel, it can
+                   -- | Replied to with a 'ConnectReply'.
+                   --
+                   -- When a client connects to the request/reply socket of the kernel, it can
                    -- issue a connect request to get basic information about the kernel, such as
                    -- the ports the other ZeroMQ sockets are listening on. This allows clients to
                    -- only have to know about a single port (the shell channel) to connect to a
                    -- kernel.
                     ConnectRequest
                    |
-                   -- | When a client needs the currently open @comm@s in the kernel, it can issue
+                   -- | Replied to with a 'CommInfoReply'.
+                   --
+                   -- When a client needs the currently open @comm@s in the kernel, it can issue
                    -- a 'CommInfoRequest' for the currently open @comm@s. When the optional
                    -- 'TargetName' is specified, the 'CommInfoReply' should only contain the
                    -- currently open @comm@s for that target.
                     CommInfoRequest (Maybe TargetName)
                    |
-                   -- | If a client needs to know information about the kernel, it can make a
+                   -- | Replied to with a 'KernelInfoReply'.
+                   --
+                   -- If a client needs to know information about the kernel, it can make a
                    -- 'KernelInfoRequest'. This message can be used to fetch core information of
                    -- the kernel, including language (e.g., Python), language version number and
                    -- IPython version number, and the IPython message spec version number.
                     KernelInfoRequest
                    |
-                   -- | The clients can request the kernel to shut itself down; this is used in
+                   -- | Replied to with a 'ShutdownReply'.
+                   --
+                   -- The clients can request the kernel to shut itself down; this is used in
                    -- multiple cases:
                    --
                    -- * when the user chooses to close the client application via a menu or window
@@ -416,7 +435,9 @@ data HistorySearchOptions =
 -- corresponds to precisely one response type (for example, 'HistoryRequest' must be responded to
 -- with a 'HistoryReply').
 data KernelReply =
-                 -- | If a client needs to know information about the kernel, it can make a request
+                 -- | Reply for a 'KernelInfoRequest'.
+                 --
+                 -- If a client needs to know information about the kernel, it can make a request
                  -- of the kernel’s information, which must be responded to with a
                  -- 'KernelInfoReply'. This message can be used to fetch core information of the
                  -- kernel, including language (e.g., Python), language version number and IPython
@@ -436,7 +457,9 @@ data KernelReply =
                  -- 'KernelOutput' messages).
                   ExecuteReply ExecuteResult ExecutionCount
                  |
-                 -- | Code can be inspected to show useful information to the user. It is up to the
+                 -- | Reply to an 'InspectRequest'.
+                 --
+                 -- Code can be inspected to show useful information to the user. It is up to the
                  -- kernel to decide what information should be displayed, and its formatting.
                  --
                  -- The reply is a mime-bundle, like a 'DisplayData' message, which should be a
@@ -444,7 +467,9 @@ data KernelReply =
                  -- this is used to show tooltips over function calls, etc.
                   InspectReply InspectResult
                  |
-                 -- | Clients can explicitly request history from a kernel. The kernel has all the
+                 -- | Reply to a 'HistoryRequest'.
+                 --
+                 -- Clients can explicitly request history from a kernel. The kernel has all the
                  -- actual execution history stored in a single location, so clients can request it
                  -- from the kernel when needed.
                  --
@@ -452,11 +477,15 @@ data KernelReply =
                  -- 'historyShowOutput' in the 'HistoryRequest' is @True@.
                   HistoryReply [HistoryItem]
                  |
-                 -- | Clients can request autocompletion results from the kernel, and the kernel
+                 -- | Reply to a 'CompleteRequest'.
+                 --
+                 -- Clients can request autocompletion results from the kernel, and the kernel
                  -- responds with a list of matches and the selection to autocomplete.
                   CompleteReply CompleteResult
                  |
-                 -- | Clients can request the code completeness status with a 'IsCompleteRequest'.
+                 -- | Reply to a 'IsCompleteRequest'.
+                 --
+                 -- Clients can request the code completeness status with a 'IsCompleteRequest'.
                  --
                  -- For example, when the user enters a line in a console style interface, the
                  -- console must decide whether to immediately execute the current code, or whether
@@ -465,7 +494,9 @@ data KernelReply =
                  -- further input.
                   IsCompleteReply CodeComplete
                  |
-                 -- | When a client connects to the request/reply socket of the kernel, it can
+                 -- | Reply to a 'ConnectReply'.
+                 --
+                 -- When a client connects to the request/reply socket of the kernel, it can
                  -- issue a 'ConnectRequest' to get basic information about the kernel, such as the
                  -- ports the other ZeroMQ sockets are listening on. This allows clients to only
                  -- have to know about a single port (the shell channel) to connect to a kernel.
@@ -474,14 +505,18 @@ data KernelReply =
                  -- sockets' ports used by the kernel.
                   ConnectReply ConnectInfo
                  |
-                 -- | When a client needs the currently open comms in the kernel, it can issue a
+                 -- | Reply to a 'CommInfoRequest'.
+                 --
+                 -- When a client needs the currently open comms in the kernel, it can issue a
                  -- 'CommInfoRequest' for the currently open comms.
                  --
                  -- The 'CommInfoReply' provides a list of currently open @comm@s with their
                  -- respective target names to the frontend.
                   CommInfoReply (Map UUID TargetName)
                  |
-                 -- | The client sends a shutdown request to the kernel, and once it receives the
+                 -- | Reply to a 'ShutdownRequest'.
+                 --
+                 -- The client sends a shutdown request to the kernel, and once it receives the
                  -- reply message (which is otherwise empty), it can assume that the kernel has
                  -- completed shutdown safely.
                  --
@@ -1012,8 +1047,20 @@ instance ToJSON Comm where
 --
 -- All data must be encoded into 'Text' values; for items such as images, the data must be
 -- base64-encoded prior to transmission.
+--
+-- In order to create the 'DisplayData' values, use the provided 'displayPlain', 'displayHTML',
+-- 'displayJavascript', etc, utilities; the 'Monoid' instance can be used to combine 'DisplayData'
+-- values to create values with multiple possible representations.
 newtype DisplayData = DisplayData (Map MimeType Text)
-  deriving (Eq, Ord, Show, Typeable, Generic)
+  deriving (Eq, Ord, Show, Typeable, Generic, Monoid)
+
+-- | Create a text/plain 'DisplayData' bundle out of a bit of 'Text'.
+displayPlain :: Text -> DisplayData
+displayPlain = DisplayData . Map.singleton MimePlainText
+--
+-- | Create a text/plain 'DisplayData' bundle out of a bit of 'Text'.
+displayLatex :: Text -> DisplayData
+displayLatex = DisplayData . Map.singleton MimeLatex
 
 -- | Convert a 'DisplayData' to a list of JSON fields.
 --

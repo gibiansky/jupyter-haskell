@@ -30,7 +30,7 @@ randoms n = replicateM n random
 
 -- | Generate a single random UUID.
 random :: IO UUID
-random = UUID <$> show <$> nextRandom
+random = UUID . show <$> nextRandom
 
 -- Allows reading and writing UUIDs as Strings in JSON.
 instance FromJSON UUID where

@@ -50,7 +50,7 @@ import           Jupyter.Messages (Client, Message(..), messageHeader, KernelOut
                                    ClientRequest(..), KernelReply(..), pattern ExecuteOk,
                                    pattern InspectOk, pattern CompleteOk, CursorRange(..),
                                    CodeComplete(..), CodeOffset(..), ConnectInfo(..), KernelInfo(..),
-                                   LanguageInfo(..))
+                                   LanguageInfo(..), KernelOutput(..), KernelStatus(..))
 import           Jupyter.Messages.Metadata (MessageHeader)
 import           Jupyter.Kernel.ZeroMQ (withJupyterSockets, JupyterSockets(..), sendMessage,
                                         receiveMessage, KernelProfile(..), readProfile)
@@ -285,5 +285,14 @@ handleRequest :: (KernelReply -> IO ()) -- ^ Callback to send reply messages to 
               -> IO ()
 handleRequest sendReply publishers (commHandler, requestHandler) message =
   case message of
-    ClientRequest _ clientRequest -> requestHandler publishers clientRequest >>= sendReply
+    ClientRequest _ clientRequest -> 
+      let handle = requestHandler publishers clientRequest >>= sendReply
+      in
+      case clientRequest of
+        ExecuteRequest{} -> do
+          publishOutput publishers $ KernelStatusOutput KernelBusy
+          handle
+          publishOutput publishers $ KernelStatusOutput KernelIdle
+        other -> handle
+        
     Comm _ comm -> commHandler publishers comm
