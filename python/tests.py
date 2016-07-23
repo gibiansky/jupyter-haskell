@@ -51,5 +51,8 @@ class TestJupyter(unittest.TestCase):
         })
         self.assertEqual(reply["parent_header"]["msg_id"], request_uuid)
 
+        # Remove the connection file
+        os.remove(client.connection_file)
+
 if __name__ == '__main__':
     unittest.main()
