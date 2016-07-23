@@ -18,7 +18,6 @@ main = do
                                      \exe connect -> [exe, "kernel", connect])
     ["kernel", profilePath] -> do
       Just profile <- readProfile profilePath
-      print profile
       serve profile defaultCommHandler $
         defaultClientRequestHandler profile $ simpleKernelInfo "Basic"
     _ -> putStrLn "Invalid arguments."
