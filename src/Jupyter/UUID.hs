@@ -3,7 +3,6 @@
 -- Generate, parse, and pretty print UUIDs for use with Jupyter.
 module Jupyter.UUID (UUID, random, randoms, uuidToString) where
 
-import           Control.Applicative ((<$>), (<*>))
 import           Control.Monad (mzero, replicateM)
 import           Data.Aeson
 import           Data.Text (pack)

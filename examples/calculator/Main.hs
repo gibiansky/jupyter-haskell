@@ -9,8 +9,7 @@ import           Control.Concurrent (newMVar)
 
 import           Jupyter.Install (installKernel, simpleKernelspec, InstallUser(..), InstallResult(..),
                                   Kernelspec)
-import           Jupyter.Kernel (readProfile, simpleKernelInfo, serve, defaultCommHandler,
-                                 defaultClientRequestHandler, KernelProfile)
+import           Jupyter.Kernel (readProfile, serve, defaultCommHandler)
 
 import           Calculator.Handler (requestHandler)
 

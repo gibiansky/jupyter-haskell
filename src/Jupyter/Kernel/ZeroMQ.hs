@@ -32,8 +32,8 @@ import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Rout
                                       Flag(..), send, receive, Receiver, Sender, lastEndpoint, bind)
 
 import           Jupyter.Kernel.Parser (parseClientMessage)
-import           Jupyter.Messages (Client, Message, Comm, ClientRequest)
-import           Jupyter.Messages.Metadata (MessageHeader(..), Username, IsMessage(..))
+import           Jupyter.Messages (Client, Message)
+import           Jupyter.Messages.Metadata (MessageHeader(..), IsMessage(..))
 import qualified Jupyter.UUID as UUID
 
 -- | The collection of <http://zeromq.org/ ZeroMQ> sockets needed to communicate with Jupyter on the
@@ -246,6 +246,7 @@ encodeHeader MessageHeader { .. } =
                    , "msg_type" .= messageType
                    ]
 
+{-
 mkRequestHeader :: IsMessage v => UUID.UUID -> Username -> v -> IO MessageHeader
 mkRequestHeader session username content = do
   uuid <- UUID.random
@@ -259,6 +260,7 @@ mkRequestHeader session username content = do
       , messageUsername = username
       , messageType = getMessageType content
       }
+-}
 
 mkReplyHeader :: IsMessage v => MessageHeader -> v -> IO MessageHeader
 mkReplyHeader parentHeader content = do

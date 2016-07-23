@@ -19,8 +19,8 @@ The main entrypoint is the 'serve' function, which provides a type-safe implemen
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Kernel (
   -- * Defining a kernel
-  CommHandler(..),
-  ClientRequestHandler(..),
+  CommHandler,
+  ClientRequestHandler,
   simpleKernelInfo,
 
   -- * Serving kernels
@@ -33,11 +33,10 @@ module Jupyter.Kernel (
   defaultCommHandler,
   ) where
 
-import           Control.Monad (forever, void)
+import           Control.Monad (forever)
 import           System.IO (hPutStrLn, stderr)
 import           Data.ByteString (ByteString)
-import           Control.Exception (Exception, throwIO)
-import Data.Text (Text)
+import           Data.Text (Text)
 
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Control (liftBaseWith)
@@ -51,7 +50,6 @@ import           Jupyter.Messages (Client, Message(..), messageHeader, KernelOut
                                    pattern InspectOk, pattern CompleteOk, CursorRange(..),
                                    CodeComplete(..), CodeOffset(..), ConnectInfo(..), KernelInfo(..),
                                    LanguageInfo(..), KernelOutput(..), KernelStatus(..))
-import           Jupyter.Messages.Metadata (MessageHeader)
 import           Jupyter.Kernel.ZeroMQ (withJupyterSockets, JupyterSockets(..), sendMessage,
                                         receiveMessage, KernelProfile(..), readProfile)
 
@@ -261,17 +259,17 @@ serveRouter sock key iopub handlers =
     received <- runInBase $ receiveMessage sock
     case received of
       Left err -> liftIO $ hPutStrLn stderr $ "Error receiving message: " ++ err
-      Right received ->
+      Right message ->
        -- After receiving a message, create the publisher callbacks which use that message as the "parent"
        -- for any responses they generate. This means that when outputs are generated in response to a
        -- message, they automatically inherit that message as a parent.
-        let header = messageHeader received
+        let header = messageHeader message
             publishers = PublishCallbacks
                        { publishComm = runInBase . sendMessage key iopub header
                        , publishOutput = runInBase . sendMessage key iopub header
                        }
             sendReply = runInBase . sendMessage key sock header
-        in handleRequest sendReply publishers handlers received
+        in handleRequest sendReply publishers handlers message
 
 -- | Handle a request using the appropriate handler.
 --
@@ -285,14 +283,17 @@ handleRequest :: (KernelReply -> IO ()) -- ^ Callback to send reply messages to 
               -> IO ()
 handleRequest sendReply publishers (commHandler, requestHandler) message =
   case message of
-    ClientRequest _ clientRequest -> 
+    ClientRequest _ clientRequest ->
       let handle = requestHandler publishers clientRequest >>= sendReply
-      in
-      case clientRequest of
+      in case clientRequest of
         ExecuteRequest{} -> do
           publishOutput publishers $ KernelStatusOutput KernelBusy
           handle
           publishOutput publishers $ KernelStatusOutput KernelIdle
-        other -> handle
-        
+        _ -> handle
+
     Comm _ comm -> commHandler publishers comm
+    ClientReply _ _ ->
+      -- This case should be unreachable, because client replies are sent only on the stdin socket, but
+      -- `handleRequest` is only used with the shell and control sockets.
+      error "Jupyter.Kernel: Unexpected ClientReply on Router socket!"

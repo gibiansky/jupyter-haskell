@@ -116,12 +116,10 @@ import           Data.Text (Text)
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Aeson (Value(..), (.=), object, FromJSON, ToJSON(..))
-import           Data.ByteString (ByteString)
 import           Data.List (intercalate)
 
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
-import           GHC.Exts (IsString)
 
 import           Jupyter.Messages.Metadata (IsMessage(..), MessageHeader)
 import           Jupyter.UUID (UUID, uuidToString)

@@ -22,14 +22,12 @@ data Expr = Lit Int
           | Var Char
 
 data Statement = Compute [(Char, Int)] Expr
-               | Plot Expr
                | Print Expr
 @
 
 Expressions in our calculator are represented by an @Expr@, and the things calculator the
 calculator can do with the expressions are the constructors of @Statement@:
   * @Compute@: Given a mapping from variables to values, compute and print the value of the expression.
-  * @Plot@: Given an expression that depends only on a variable 'x', plot a small graph of the function.
   * @Print@: Print a representation of the expression (emits both plain text and LaTeX).
 
 The kernel features implemented by this kernel include code execution, autocompletion of 
@@ -50,8 +48,7 @@ import qualified Data.Text as T
 import           Data.Monoid ((<>))
 import           Control.Concurrent (MVar, modifyMVar)
 
-import           Jupyter.Kernel (simpleKernelInfo, defaultClientRequestHandler, KernelProfile,
-                                 PublishCallbacks(..))
+import           Jupyter.Kernel (defaultClientRequestHandler, KernelProfile, PublishCallbacks(..))
 import           Jupyter.Messages (ClientRequest(..), KernelReply(..), KernelInfo(..),
                                    LanguageInfo(..), HelpLink(..), CodeBlock(..), CodeOffset(..),
                                    ExecutionCount, KernelOutput(..), ErrorInfo(..), displayPlain,
@@ -74,7 +71,6 @@ data Expr = Lit Int
 data Statement = Compute [(Char, Int)] Expr -- ^ Compute the value of an expression, substituting
                                             -- variables as necessary. If variables are left over
                                             -- after substitution, an error is raised.
-               | Plot Expr -- ^ Plot an expression with the variable 'x' in it as a graph.
                | Print Expr  -- ^ Print a mathematical representation of the expression.
   deriving (Eq, Ord, Show, Read)
 
@@ -140,7 +136,6 @@ tokenDocumentation =
   , ("Subtract", "Subtract: Subtract one expression from another.")
   , ("Divide", "Divide: Divide an expression by another.")
   , ("Compute", "Compute: Given an expression and variable bindings, compute the expression value.")
-  , ("Plot", "Plot: Plot a function of a variable 'x'.")
   , ("Print", "Print: Print an expression as text or LaTeX.")
   ]
 
@@ -155,7 +150,7 @@ requestHandler profile execCountVar callbacks req =
       -- For this simple kernel, ignore the execution options, as they do not apply
       -- to our simple kernel. Also, automatically increment the execution counter.
       modifyMVar execCountVar $ \execCount -> do
-        reply <- handleExecuteRequest (execCount + 1) code callbacks
+        reply <- handleExecuteRequest execCount code callbacks
         return (execCount + 1, reply)
     InspectRequest code offset _ ->
       -- Ignore the detail level, because for this simple kernel we don't have
@@ -198,36 +193,28 @@ findPreceedingToken code offset =
 handleExecuteRequest :: ExecutionCount -> CodeBlock -> PublishCallbacks -> IO KernelReply
 handleExecuteRequest execCount (CodeBlock code) PublishCallbacks { .. } =
   case parse code of
-    Nothing ->
+    Nothing -> do
+      -- Parse error!
+      let errMsg = "Could not parse: '" <> code <> "'"
+      publishOutput $ DisplayDataOutput $ displayPlain errMsg
       reply $ ExecuteError
-                 ErrorInfo
-                   { errorName = "Parse Error"
-                   , errorValue = "Could not parse: '" <> code <> "'"
-                   , errorTraceback = []
-                   }
-    Just statement ->
-      case statement of
-        Compute bindings expr ->
-          case eval bindings expr of
-            Nothing ->
-              reply $ ExecuteError
-                         ErrorInfo
-                           { errorName = "Eval Error"
-                           , errorValue = "Missing variable bindings in: '" <> code <> "'"
-                           , errorTraceback = []
-                           }
-            Just val -> do
-              publishOutput $  DisplayDataOutput $ displayPlain $ T.pack $ show val
-              reply ExecuteOk
+                ErrorInfo { errorName = "Parse Error", errorValue = errMsg, errorTraceback = [] }
+    Just (Compute bindings expr) ->
+      case eval bindings expr of
+        Nothing -> do
+          let errMsg = "Missing variable bindings in: '" <> code <> "'"
+          publishOutput $ DisplayDataOutput $ displayPlain errMsg
+          reply $ ExecuteError
+                    ErrorInfo { errorName = "Eval Error", errorValue = errMsg, errorTraceback = [] }
+        Just val -> do
+          publishOutput $ DisplayDataOutput $ displayPlain $ T.pack $ show val
+          reply ExecuteOk
 
-        Plot expr -> do
-          publishOutput $  DisplayDataOutput $ displayPlain "PLOT"
-          reply ExecuteOk
-        Print expr -> do
-          let text = T.pack $ printText expr
-              latex = T.pack $ printLatex expr
-          publishOutput $ DisplayDataOutput $ displayPlain text <> displayLatex latex
-          reply ExecuteOk
+    Just (Print expr) -> do
+      let text = T.pack $ printText expr
+          latex = T.pack $ printLatex expr
+      publishOutput $ DisplayDataOutput $ displayPlain text <> displayLatex latex
+      reply ExecuteOk
   where
     reply r = return $ ExecuteReply r execCount
 

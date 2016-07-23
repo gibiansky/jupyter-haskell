@@ -9,7 +9,7 @@ import qualified Data.Text.IO as T
 import           Jupyter.Install (installKernel, simpleKernelspec, InstallUser(..), InstallResult(..),
                                   Kernelspec)
 import           Jupyter.Kernel (readProfile, simpleKernelInfo, serve, defaultCommHandler,
-                                 defaultClientRequestHandler, KernelProfile)
+                                 defaultClientRequestHandler)
 
 -- | In `main`, support two commands:
 --

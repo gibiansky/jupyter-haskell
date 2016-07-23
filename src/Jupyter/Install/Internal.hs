@@ -17,7 +17,7 @@ module Jupyter.Install.Internal where
 
 import           Control.Monad (forM_, void, unless, when)
 import           Data.Maybe (isJust)
-import           System.Environment (lookupEnv, getExecutablePath)
+import           System.Environment (getExecutablePath)
 import           System.Directory (findExecutable, getTemporaryDirectory, removeDirectoryRecursive,
                                    createDirectoryIfMissing, copyFile, doesDirectoryExist, canonicalizePath)
 import           System.Process (readProcess)
