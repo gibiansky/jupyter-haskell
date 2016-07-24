@@ -95,7 +95,7 @@ simpleKernelInfo kernelName =
 -- and 'sendComm', respectively, which are often sent to frontends in response to 'ExecuteRequest'
 -- messsages.
 --
--- In addition, 'sentClientRequest' can be used to send a 'KernelRequest' to the client, and
+-- In addition, 'sentKernelRequest' can be used to send a 'KernelRequest' to the client, and
 -- synchronously wait and receive a 'ClientReply'.
 data KernelCallbacks =
        KernelCallbacks
@@ -107,7 +107,7 @@ data KernelCallbacks =
                                      -- frontends and kernels, avoiding the structure of the Jupyter
                                      -- messaging protocol. This can be used for implementing custom
                                      -- features such as support for the Jupyter notebook widgets.
-         , sendClientRequest :: KernelRequest -> IO ClientReply -- ^ Send a 'KernelRequest' to the
+         , sendKernelRequest :: KernelRequest -> IO ClientReply -- ^ Send a 'KernelRequest' to the
                                                                 -- client that send the first message
                                                                 -- and wait for it to reply with a
                                                                 -- 'ClientReply'.
@@ -281,7 +281,11 @@ serveRouter sock key iopub stdin handlers =
         -- for any responses they generate. This means that when outputs are generated in response to a
         -- message, they automatically inherit that message as a parent.
         let header = messageHeader message
-            publishers = KernelCallbacks { sendComm = runInBase . sendMessage key iopub header, sendKernelOutput = runInBase . sendMessage key iopub header, sendClientRequest = runInBase . stdinCommunicate header }
+            publishers = KernelCallbacks
+              { sendComm = runInBase . sendMessage key iopub header
+              , sendKernelOutput = runInBase . sendMessage key iopub header
+              , sendKernelRequest = runInBase . stdinCommunicate header
+              }
             sendReply = runInBase . sendMessage key sock header
         in handleRequest sendReply publishers handlers message
   where
