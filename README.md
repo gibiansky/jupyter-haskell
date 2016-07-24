@@ -20,6 +20,7 @@ notebook or another frontend), take a look at [IHaskell](http://github.com/gibia
     * [Registering the Kernel](#registering-the-kernel)
     * [Communicating with Clients](#communicating-with-clients)
     * [A Complete Kernel](#a-complete-kernel)
+    * [Reading from Standard Input](#reading-from-standard-input)
 - [Creating Clients](#creating-clients)
 - [Contributing](#contributing)
     * [Developer Notes](#developer-notes)
@@ -238,20 +239,21 @@ serve :: KernelProfile -- ^ Specifies how to communicate with clients
 
 The kernel behaviour is specified by the two message handlers, the [`CommHandler`](FAKE) and the [`ClientRequestHandler`](FAKE). The [`ClientRequestHandler`](FAKE) receives a [`ClientRequest`](FAKE) and must generate a [`KernelReply`](FAKE) to send to the client:
 ```haskell
-type ClientRequestHandler = PublishCallbacks -> ClientRequest -> IO KernelReply
+type ClientRequestHandler = KernelCallbacks -> ClientRequest -> IO KernelReply
 ```
 The constructor of the output [`KernelReply`](FAKE) *must* match the constructor of the [`ClientRequest`](FAKE).
 
 Besides generating the [`KernelReply`](FAKE), the [`ClientRequestHandler`](FAKE) may also send
 messages to the client using the publishing callbacks:
 ```haskell
-data PublishCallbacks = PublishCallbacks {
-    publishOutput :: KernelOutput -> IO (),
-    publishComm :: Comm -> IO ()
+data KernelCallbacks = PublishCallbacks {
+    sendKernelOutput :: KernelOutput -> IO (),
+    sendComm :: Comm -> IO (),
+    sendKernelRequest :: KernelRequest -> IO ClientReply
   }
 ```
 For example, during code execution, the kernel will receive an [`ExecuteRequest`](FAKE), run the
-requested code, using `publishOutput` to send [`KernelOutput`](FAKE) messages to the client with
+requested code, using `sendKernelOutput` to send [`KernelOutput`](FAKE) messages to the client with
 intermediate and final outputs of the running code, and then generate a [`ExecuteReply`](FAKE) that
 is returned once the code is done running.
 
@@ -330,6 +332,39 @@ publish any results of the execution to the frontends using the `publishOutput` 
 kernel that implements a simple calculator and handles most message types is provided in the
 [`examples/calculator`](FAKE) directory, and can be built and run similarly to the `basic` kernel
 (see above).
+
+### Reading from Standard Input
+
+In the Jupyter messaging protocol, the kernel never needs to send requests to the frontend, with the
+exception of one instance: reading from standard input. Because knowing when standard input is read
+requires executing code (something only the kernel can do), only the kernel can initiate reading
+from standard input.
+
+Since the kernel may be running as a subprocess of the frontend, or can even be running on a remote
+machine, the kernel must be able to somehow intercept reads from standard input and turn them into
+requests to the Jupyter frontend that requested the code execution. To facilitate this, the
+[`KernelCallbacks`](FAKE) record provided to the [`ClientRequestHandler`](FAKE) has a
+[`sendKernelRequest`](FAKE) callback:
+
+```haskell
+-- Send a request to the kernel and wait for a reply in a blocking manner.
+sendKernelRequest :: KernelCallbacks -> KernelRequest -> IO ClientReply
+
+-- Request from kernel to client for standard input.
+data KernelRequest = InputRequest InputOptions
+data InputOptions = InputOptions { inputPrompt :: Text, inputPassword :: Bool }
+
+-- Response to a InputRequest.
+data ClientReply = InputReply Text
+```
+
+The [`KernelRequest`](FAKE) and [`ClientReply`](FAKE) data types are meant to mirror the
+more widely used [`ClientRequest`](FAKE) and [`KernelReply`](FAKE) data types; at the moment, these
+data types are used only for standard input, but future versions of the messaging protocol may
+introduce more messages.
+
+An example of a kernel that uses these to read from standard input during code execution is
+available in the [`examples/stdin`](FAKE) folder.
 
 ### Creating Clients
 
