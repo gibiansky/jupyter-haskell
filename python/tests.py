@@ -80,7 +80,6 @@ class TestJupyter(unittest.TestCase):
     def test_basic_exec(self):
         """Test that we can execute code in the basic kernel."""
         with kernel("basic") as client:
-            # Send the kernel_info_request and get the reply
             request_uuid = client.execute("")
             reply = client.get_shell_msg()
             self.assertEqual(reply["header"]["msg_type"], "execute_reply")
@@ -93,7 +92,6 @@ class TestJupyter(unittest.TestCase):
     def test_basic_busy_idle_message(self):
         """Test that during code execution, busy and idle messages are sent."""
         with kernel("basic") as client:
-            # Send the kernel_info_request and get the reply
             request_uuid = client.execute("")
             reply = client.get_iopub_msg(timeout=1)
             self.assertEqual(reply["header"]["msg_type"], "status")
@@ -112,7 +110,6 @@ class TestJupyter(unittest.TestCase):
     def test_calculator_exec_ok(self):
         """Tests calculator code execution which succeeds."""
         with kernel("calculator") as client:
-            # Send the kernel_info_request and get the reply
             client.execute("Compute [] (Lit 1)")
             replies = [client.get_iopub_msg(timeout=1) for _ in range(3)]
 
@@ -136,12 +133,52 @@ class TestJupyter(unittest.TestCase):
     def test_calculator_exec_err(self):
         """Tests calculator code execution which fails."""
         with kernel("calculator") as client:
-            # Send the kernel_info_request and get the reply
             client.execute("Compute [] (Var 'x')")
 
             reply = client.get_shell_msg()
             self.assertEqual(reply["header"]["msg_type"], "execute_reply")
             self.assertEqual(reply["content"]["status"], "error")
+
+    def test_calculator_inspect(self):
+        """Tests calculator code execution which fails."""
+        with kernel("calculator") as client:
+            client.inspect("1 + 23 ` Add789", 12)
+
+            reply = client.get_shell_msg()
+            self.assertEqual(reply["header"]["msg_type"], "inspect_reply")
+            self.assertEqual(reply["content"], {
+                "status": "ok",
+                "found": True,
+                "data": {
+                    "text/plain": "Add: Add two expressions."
+                },
+                "metadata": {},
+            })
+
+            client.inspect("1 + 23 ` NotAToken789", 12)
+
+            reply = client.get_shell_msg()
+            self.assertEqual(reply["header"]["msg_type"], "inspect_reply")
+            self.assertEqual(reply["content"], {
+                "status": "ok",
+                "found": False,
+                "data": {},
+                "metadata": {},
+            })
+
+    def test_calculator_complete(self):
+        """Tests calculator code execution which fails."""
+        with kernel("calculator") as client:
+            client.complete("1 + 23 ` Comp789", 13)
+            reply = client.get_shell_msg()
+            self.assertEqual(reply["header"]["msg_type"], "complete_reply")
+            self.assertEqual(reply["content"], {
+                "status": "ok",
+                "cursor_start": 9,
+                "cursor_end": 13,
+                "matches": ["Compute"],
+                "metadata": {},
+            })
 
 
 if __name__ == '__main__':
