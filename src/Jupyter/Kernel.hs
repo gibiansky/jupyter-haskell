@@ -28,7 +28,7 @@ module Jupyter.Kernel (
   serveWithDynamicPorts,
   KernelProfile(..),
   readProfile,
-  PublishCallbacks(..), 
+  KernelCallbacks(..), 
   defaultClientRequestHandler,
   defaultCommHandler,
   ) where
@@ -37,6 +37,8 @@ import           Control.Monad (forever)
 import           System.IO (hPutStrLn, stderr)
 import           Data.ByteString (ByteString)
 import           Data.Text (Text)
+import qualified Data.Text as T
+import           Control.Exception (throwIO, Exception)
 
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Control (liftBaseWith)
@@ -49,9 +51,16 @@ import           Jupyter.Messages (Client, Message(..), messageHeader, KernelOut
                                    ClientRequest(..), KernelReply(..), pattern ExecuteOk,
                                    pattern InspectOk, pattern CompleteOk, CursorRange(..),
                                    CodeComplete(..), CodeOffset(..), ConnectInfo(..), KernelInfo(..),
-                                   LanguageInfo(..), KernelOutput(..), KernelStatus(..))
+                                   LanguageInfo(..), KernelOutput(..), KernelStatus(..),
+                                   KernelRequest(..), ClientReply(..))
+import           Jupyter.Messages.Metadata (MessageHeader(..), MessageType(..))
 import           Jupyter.Kernel.ZeroMQ (withJupyterSockets, JupyterSockets(..), sendMessage,
                                         receiveMessage, KernelProfile(..), readProfile)
+
+data MessagingException = MessagingException String 
+  deriving (Eq, Ord, Show)
+
+instance Exception MessagingException
 
 -- | Create the simplest possible 'KernelInfo'.
 --
@@ -81,20 +90,27 @@ simpleKernelInfo kernelName =
     }
 
 
--- | The 'PublishCallbacks' data type contains callbacks that the kernel may use to publish messages
--- to the client. Specifically, it can send 'KernelOutput' and 'Comm' messages, which are often sent
--- to frontends in response to 'ExecuteRequest' messsages.
-data PublishCallbacks =
-       PublishCallbacks
-         { publishOutput :: KernelOutput -> IO () -- ^ Publish an output to all connected frontends.
-                                                  -- This is the primary mechanism by which a kernel
-                                                  -- shows output to the user.
-         , publishComm :: Comm -> IO () -- ^ Publish a @comm@ message to the frontends. This allows
-                                        -- for entirely freeform back-and-forth communication between
-                                        -- frontends and kernels, avoiding the structure of the
-                                        -- Jupyter messaging protocol. This can be used for
-                                        -- implementing custom features such as support for the
-                                        -- Jupyter notebook widgets.
+-- | The 'KernelCallbacks' data type contains callbacks that the kernel may use to communicate with
+-- the client. Specifically, it can send 'KernelOutput' and 'Comm' messages using 'sendKernelOutput'
+-- and 'sendComm', respectively, which are often sent to frontends in response to 'ExecuteRequest'
+-- messsages.
+--
+-- In addition, 'sentClientRequest' can be used to send a 'KernelRequest' to the client, and
+-- synchronously wait and receive a 'ClientReply'.
+data KernelCallbacks =
+       KernelCallbacks
+         { sendKernelOutput :: KernelOutput -> IO () -- ^ Publish an output to all connected
+                                                     -- frontends. This is the primary mechanism by
+                                                     -- which a kernel shows output to the user.
+         , sendComm :: Comm -> IO () -- ^ Publish a 'Comm' message to the frontends. This allows for
+                                     -- entirely freeform back-and-forth communication between
+                                     -- frontends and kernels, avoiding the structure of the Jupyter
+                                     -- messaging protocol. This can be used for implementing custom
+                                     -- features such as support for the Jupyter notebook widgets.
+         , sendClientRequest :: KernelRequest -> IO ClientReply -- ^ Send a 'KernelRequest' to the
+                                                                -- client that send the first message
+                                                                -- and wait for it to reply with a
+                                                                -- 'ClientReply'.
          }
 
 -- | When calling 'serve', the caller must provide a 'CommHandler'.
@@ -108,7 +124,7 @@ data PublishCallbacks =
 --
 -- The 'defaultCommHandler' handler is provided for use with kernels that wish to ignore all 'Comm'
 -- messages.
-type CommHandler = PublishCallbacks -> Comm -> IO ()
+type CommHandler = KernelCallbacks -> Comm -> IO ()
 
 -- | When calling 'serve', the caller must provide a 'ClientRequestHandler'.
 --
@@ -122,7 +138,7 @@ type CommHandler = PublishCallbacks -> Comm -> IO ()
 --
 -- Note: When the request is a 'ExecuteRequest' with the 'executeSilent' option set to @True@, the
 -- 'KernelReply' will not be sent.
-type ClientRequestHandler = PublishCallbacks -> ClientRequest -> IO KernelReply
+type ClientRequestHandler = KernelCallbacks -> ClientRequest -> IO KernelReply
 
 -- | Handler which ignores all 'Comm' messages sent to the kernel (and does nothing).
 defaultCommHandler :: CommHandler
@@ -224,8 +240,8 @@ serveInternal mProfile profileHandler commHandler requestHandler =
 
     -- Start all listening loops in separate threads.
     async1 <- loop $ echoHeartbeat heartbeatSocket
-    async2 <- loop $ serveRouter controlSocket key iopubSocket handlers
-    async3 <- loop $ serveRouter shellSocket key iopubSocket handlers
+    async2 <- loop $ serveRouter controlSocket key iopubSocket stdinSocket handlers
+    async3 <- loop $ serveRouter shellSocket key iopubSocket stdinSocket handlers
 
     -- Make sure that a fatal exception on any thread kills all threads.
     liftIO $ do
@@ -249,9 +265,10 @@ echoHeartbeat heartbeatSocket =
 serveRouter :: Socket z Router  -- ^ The /shell/ or /control/ socket to listen on and write to
             -> ByteString       -- ^ The signature key to sign messages with
             -> Socket z Pub     -- ^ The /iopub/ socket to publish outputs to
+            -> Socket z Router  -- ^ The /stdin/ socket to use to get input from the client
             -> (CommHandler, ClientRequestHandler) -- ^ The handlers to use to respond to messages
             -> ZMQ z ()
-serveRouter sock key iopub handlers = 
+serveRouter sock key iopub stdin handlers =
   -- We use 'liftBaseWith' and the resulting 'RunInBase' from the 'MonadBaseControl' class in order to
   -- hide from the kernel implementer the fact that all of this is running in the ZMQ monad. This ends
   -- up being very straightforward, because the ZMQ monad is a very thin layer over IO.
@@ -260,16 +277,28 @@ serveRouter sock key iopub handlers =
     case received of
       Left err -> liftIO $ hPutStrLn stderr $ "Error receiving message: " ++ err
       Right message ->
-       -- After receiving a message, create the publisher callbacks which use that message as the "parent"
-       -- for any responses they generate. This means that when outputs are generated in response to a
-       -- message, they automatically inherit that message as a parent.
+        -- After receiving a message, create the publisher callbacks which use that message as the "parent"
+        -- for any responses they generate. This means that when outputs are generated in response to a
+        -- message, they automatically inherit that message as a parent.
         let header = messageHeader message
-            publishers = PublishCallbacks
-                       { publishComm = runInBase . sendMessage key iopub header
-                       , publishOutput = runInBase . sendMessage key iopub header
-                       }
+            publishers = KernelCallbacks { sendComm = runInBase . sendMessage key iopub header, sendKernelOutput = runInBase . sendMessage key iopub header, sendClientRequest = runInBase . stdinCommunicate header }
             sendReply = runInBase . sendMessage key sock header
         in handleRequest sendReply publishers handlers message
+  where
+    stdinCommunicate header req = do
+      sendMessage key stdin header req
+      received <- receiveMessage stdin
+      case received of
+        Left err ->
+          -- There's no way to recover from this, so just die.
+          liftIO $ throwIO $ MessagingException $ "Jupyter.Kernel: Unexpected failure parsing ClientReply message: " ++ err
+        Right message ->
+          case message of
+            ClientReply _ reply -> return reply
+            _ ->
+              let msgType = T.unpack $ messageTypeText $ messageType $ messageHeader message
+                  err = "Jupyter.Kernel: Unexpected message type on stdin socket: " ++  msgType
+              in liftIO $ throwIO $ MessagingException err
 
 -- | Handle a request using the appropriate handler.
 --
@@ -277,7 +306,7 @@ serveRouter sock key iopub handlers =
 -- 'ClientRequestHandler' and the 'CommHandler' respectively. In the case of a 'ClientRequest', the
 -- 'KernelReply' is also sent back to the frontend.
 handleRequest :: (KernelReply -> IO ()) -- ^ Callback to send reply messages to the frontend
-              -> PublishCallbacks -- ^ Callbacks for publishing outputs to frontends
+              -> KernelCallbacks -- ^ Callbacks for publishing outputs to frontends
               -> (CommHandler, ClientRequestHandler) -- ^ Handlers for messages from frontends
               -> Message Client -- ^ The received message content
               -> IO ()
@@ -287,13 +316,13 @@ handleRequest sendReply publishers (commHandler, requestHandler) message =
       let handle = requestHandler publishers clientRequest >>= sendReply
       in case clientRequest of
         ExecuteRequest{} -> do
-          publishOutput publishers $ KernelStatusOutput KernelBusy
+          sendKernelOutput publishers $ KernelStatusOutput KernelBusy
           handle
-          publishOutput publishers $ KernelStatusOutput KernelIdle
+          sendKernelOutput publishers $ KernelStatusOutput KernelIdle
         _ -> handle
 
     Comm _ comm -> commHandler publishers comm
     ClientReply _ _ ->
       -- This case should be unreachable, because client replies are sent only on the stdin socket, but
       -- `handleRequest` is only used with the shell and control sockets.
-      error "Jupyter.Kernel: Unexpected ClientReply on Router socket!"
+      throwIO $ MessagingException "Jupyter.Kernel: Unexpected ClientReply on Router socket!"

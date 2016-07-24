@@ -71,7 +71,7 @@ newtype Username = Username Text
 -- | The type of a message, internally stored as a string.
 --
 -- Examples include @execute_request@, @comm_open@, and @display_data@. 
-newtype MessageType = MessageType Text
+newtype MessageType = MessageType { messageTypeText :: Text }
   deriving (Eq, Ord, Show, FromJSON, ToJSON, IsString)
 
 -- | Jupyter messages are represented as a variety of datatypes,

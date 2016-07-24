@@ -48,7 +48,7 @@ import qualified Data.Text as T
 import           Data.Monoid ((<>))
 import           Control.Concurrent (MVar, modifyMVar)
 
-import           Jupyter.Kernel (defaultClientRequestHandler, KernelProfile, PublishCallbacks(..))
+import           Jupyter.Kernel (defaultClientRequestHandler, KernelProfile, KernelCallbacks(..))
 import           Jupyter.Messages (ClientRequest(..), KernelReply(..), KernelInfo(..),
                                    LanguageInfo(..), HelpLink(..), CodeBlock(..), CodeOffset(..),
                                    ExecutionCount, KernelOutput(..), ErrorInfo(..), displayPlain,
@@ -142,8 +142,8 @@ tokenDocumentation =
 -- | The main request handler for the Calculator kernel.
 --
 -- The request handler is responsible for generating a KernelReply when given a ClientRequest, optionally
--- publishing results using the callbacks provided to it in the PublishCallbacks record.
-requestHandler :: KernelProfile -> MVar ExecutionCount -> PublishCallbacks -> ClientRequest -> IO KernelReply
+-- publishing results using the callbacks provided to it in the 'KernelCallbacks' record.
+requestHandler :: KernelProfile -> MVar ExecutionCount -> KernelCallbacks -> ClientRequest -> IO KernelReply
 requestHandler profile execCountVar callbacks req =
   case req of
     ExecuteRequest code _ ->
@@ -190,30 +190,30 @@ findPreceedingToken code offset =
       token = T.takeWhileEnd (`elem` allowedSymbolChars) beforeCursor
   in token
 
-handleExecuteRequest :: ExecutionCount -> CodeBlock -> PublishCallbacks -> IO KernelReply
-handleExecuteRequest execCount (CodeBlock code) PublishCallbacks { .. } =
+handleExecuteRequest :: ExecutionCount -> CodeBlock -> KernelCallbacks -> IO KernelReply
+handleExecuteRequest execCount (CodeBlock code) KernelCallbacks { .. } =
   case parse code of
     Nothing -> do
       -- Parse error!
       let errMsg = "Could not parse: '" <> code <> "'"
-      publishOutput $ DisplayDataOutput $ displayPlain errMsg
+      sendKernelOutput $ DisplayDataOutput $ displayPlain errMsg
       reply $ ExecuteError
                 ErrorInfo { errorName = "Parse Error", errorValue = errMsg, errorTraceback = [] }
     Just (Compute bindings expr) ->
       case eval bindings expr of
         Nothing -> do
           let errMsg = "Missing variable bindings in: '" <> code <> "'"
-          publishOutput $ DisplayDataOutput $ displayPlain errMsg
+          sendKernelOutput $ DisplayDataOutput $ displayPlain errMsg
           reply $ ExecuteError
                     ErrorInfo { errorName = "Eval Error", errorValue = errMsg, errorTraceback = [] }
         Just val -> do
-          publishOutput $ DisplayDataOutput $ displayPlain $ T.pack $ show val
+          sendKernelOutput $ DisplayDataOutput $ displayPlain $ T.pack $ show val
           reply ExecuteOk
 
     Just (Print expr) -> do
       let text = T.pack $ printText expr
           latex = T.pack $ printLatex expr
-      publishOutput $ DisplayDataOutput $ displayPlain text <> displayLatex latex
+      sendKernelOutput $ DisplayDataOutput $ displayPlain text <> displayLatex latex
       reply ExecuteOk
   where
     reply r = return $ ExecuteReply r execCount

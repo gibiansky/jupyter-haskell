@@ -138,7 +138,7 @@ data Kernel
 -- Unlike most messages, 'Comm' messages can be either @'Message' 'Client'@ or @'Message' 'Kernel'@,
 -- since both kernels and clients can send 'Comm' messages.
 data Message s where
-        Comm :: MessageHeader -> Comm -> Message s 
+        Comm :: MessageHeader -> Comm -> Message s
         ClientRequest :: MessageHeader -> ClientRequest -> Message Client
         ClientReply :: MessageHeader -> ClientReply -> Message Client
         KernelRequest :: MessageHeader -> KernelRequest -> Message Kernel
@@ -826,6 +826,17 @@ data KernelRequest =
      -- | Request text input from standard input.
       InputRequest InputOptions
   deriving (Eq, Ord, Show)
+
+instance IsMessage KernelRequest where
+  getMessageType req =
+    case req of
+      InputRequest{} -> "input_request"
+
+instance ToJSON KernelRequest where
+  toJSON req =
+    case req of
+      InputRequest InputOptions { .. } ->
+        object ["prompt" .= inputPrompt, "password" .= inputPassword]
 
 -- | Metadata for requesting input from the user.
 data InputOptions =
