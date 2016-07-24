@@ -24,6 +24,10 @@ def kernel(kernel_name):
     manager = multimanager.get_kernel(uid)
     client = manager.client()
 
+    # Prepare the client; don't do anything until it's ready!
+    client.start_channels()
+    client.wait_for_ready()
+
     try:
         yield client
     finally:
@@ -55,6 +59,10 @@ class TestJupyter(unittest.TestCase):
 
         subprocess.check_call(["kernel-calculator", "install"])
         kernelspec = manager.get_kernel_spec("calculator")
+        self.assertTrue(os.path.isfile(kernelspec.argv[0]))
+
+        subprocess.check_call(["kernel-stdin", "install"])
+        kernelspec = manager.get_kernel_spec("stdin")
         self.assertTrue(os.path.isfile(kernelspec.argv[0]))
 
     def test_basic_kernel_info(self):
@@ -179,6 +187,39 @@ class TestJupyter(unittest.TestCase):
                 "matches": ["Compute"],
                 "metadata": {},
             })
+
+    def test_stdin(self):
+        """Tests calculator code execution which fails."""
+        with kernel("stdin") as client:
+            client.execute("Prompt")
+
+            stdin_msg = client.get_stdin_msg()
+            self.assertEqual(stdin_msg["header"]["msg_type"], "input_request")
+            self.assertEqual(stdin_msg["content"], {
+                "prompt": "Prompt",
+                "password": False,
+            })
+
+            client.input("input")
+
+            reply = client.get_shell_msg()
+            self.assertEqual(reply["header"]["msg_type"], "execute_reply")
+            self.assertEqual(reply["content"], {
+                "execution_count": 1,
+                "status": "ok",
+            })
+
+
+            iopubs = [client.get_iopub_msg(timeout=1) for _ in range(3)]
+            types = [msg["header"]["msg_type"] for msg in iopubs]
+            self.assertEqual(types, ["status", "display_data", "status"])
+
+            contents = [msg["content"] for msg in iopubs]
+            self.assertEqual(contents, [
+                {"execution_state": "busy"},
+                {"data": {"text/plain": "input"}, "metadata": {}},
+                {"execution_state": "idle"},
+            ])
 
 
 if __name__ == '__main__':

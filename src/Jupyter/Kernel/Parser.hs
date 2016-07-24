@@ -25,7 +25,8 @@ import qualified Data.Text as T
 
 import           Jupyter.Messages (Client, Message(..), ClientRequest(..), Comm(..), DetailLevel(..),
                                    HistorySearchOptions(..), Restart(..), HistoryOptions(..),
-                                   ExecuteOptions(..), HistoryRangeOptions(..), HistoryAccessType(..))
+                                   ExecuteOptions(..), HistoryRangeOptions(..), HistoryAccessType(..),
+                                   ClientReply(..))
 import           Jupyter.Messages.Metadata (MessageHeader(..), MessageType(..))
 
 -- | Given all the data obtained from the ZeroMQ socket, attempt to parse the message header and
@@ -85,8 +86,13 @@ parseClientMessageContent (MessageType messageType) content = do
     "comm_msg"            -> parseComm commMsgParser
     "comm_close"          -> parseComm commCloseParser
 
+    "input_reply"         -> flip ClientReply <$> parse inputReplyParser
+
     _                     -> Left $ "Could not parse unknown message type: " ++ T.unpack messageType
 
+
+inputReplyParser :: Object -> Parser ClientReply
+inputReplyParser o = InputReply <$> o .: "value"
 
 executeRequestParser :: Object -> Parser ClientRequest
 executeRequestParser o = ExecuteRequest <$> o .: "code"
