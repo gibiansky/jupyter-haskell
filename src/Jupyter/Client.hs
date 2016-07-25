@@ -1,41 +1,86 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
 module Jupyter.Client () where
 
-data ClientState  = ClientState {
-      clientCommHandler :: CommHandler,
-      clientSockets :: ClientSockets
-      clientSessionUsername :: Username,
-      clientSessionUuid :: UUID,
-      clientSignatureKey :: ByteString
-   }
+import Data.Maybe (fromMaybe)
+import Data.ByteString (ByteString)
+import qualified Data.Text as T
 
-newtype Client a = Client (ReaderT ClientState IO a)
-  deriving (Functor, Applicative, Monad)
+import           Control.Monad.Trans (lift)
+import           Control.Monad.Reader (ReaderT, runReaderT, ask)
+import           Control.Monad.IO.Class (MonadIO(..))
+import           Control.Monad.Trans.Control (liftBaseWith)
 
-type KernelRequestHandler = (Comm -> IO ()) -> KernelRequest -> IO ClientReply
+import           Jupyter.ZeroMQ (ClientSockets(..), withClientSockets, sendMessage, receiveMessage,
+                                 messagingError, mkRequestHeader, KernelProfile(..))
+import           Jupyter.Messages (Comm, KernelRequest, ClientReply, KernelOutput, ClientRequest,
+                                   KernelReply, Message(..), messageHeader)
+import           Jupyter.Messages.Metadata (Username, MessageHeader(..), MessageType(..))
+import qualified Jupyter.UUID as UUID
 
-type KernelOutputHandler = KernelOutput
+import           System.ZMQ4.Monadic (ZMQ)
 
-runClient :: KernelProfile -> Maybe Username -> CommHandler -> Client a -> IO a
-runClient profile mUser commHandler (Client client) = runZMQ $ do
-  let sessionUsername = fromMaybe "default-username" mUser
-  sessionUuid <- UUID.random
-  sockets <- connectToKernel profile
-  let clientState = ClientState
-        { clientCommHandler = commHandler
-        , clientSockets = sockets
-        , clientSessionUsername = sessionUsername
-        , clientSessionUuid = sessionUuid
-        , clientSignatureKey = profileSignatureKey profile
-        }
+data ClientState = forall z.
+       ClientState
+         { clientSockets :: ClientSockets z
+         , clientSessionUsername :: Username
+         , clientSessionUuid :: UUID.UUID
+         , clientSignatureKey :: ByteString
+         , clientLiftZMQ :: forall a. ZMQ z a -> Client a
+         }
 
-  runReaderT clientState client
+newtype Client a = Client { unClient :: ReaderT ClientState IO a }
+  deriving (Functor, Applicative, Monad, MonadIO)
 
-sendRequest :: KernelRequestHandler -> KernelOutputHandler -> ClientRequest -> (KernelReply -> Client ()) -> Client () 
-sendRequest kernelRequestHandler kernelOutputHandler req = do
-  ClientState{..} <- ask
-  header <- liftIO $ mkRequestHeader clientSessionUsername clientSessionUuid req
-  sendMessage clientSignatureKey socket header req
+data ClientHandlers =
+       ClientHandlers
+         { kernelRequestHandler :: (Comm -> IO ()) -> KernelRequest -> IO ClientReply
+         , commHandler :: (Comm -> IO ()) -> Comm -> IO ()
+         , kernelOutputHandler :: (Comm -> IO ()) -> KernelOutput -> IO ()
+         }
 
-sendComm :: Comm -> Client ()
-sendComm comm
+runClient :: Maybe KernelProfile -> Maybe Username -> ClientHandlers -> Client a -> IO a
+runClient mProfile mUser clientHandlers (Client client) =
+  withClientSockets mProfile $ \profile sockets ->
+    liftBaseWith $ \runInBase -> do
+      let sessionUsername = fromMaybe "default-username" mUser
+      sessionUuid <- UUID.random
+      let clientState = ClientState
+            { clientSockets = sockets
+            , clientSessionUsername = sessionUsername
+            , clientSessionUuid = sessionUuid
+            , clientSignatureKey = profileSignatureKey profile
+            , clientLiftZMQ = liftIO . runInBase
+            }
+
+      runReaderT client clientState
+
+sendClientRequest :: ClientRequest -> Client KernelReply
+sendClientRequest req = do
+  ClientState { .. } <- ask
+  header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername req
+  clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header req
+  message <- clientLiftZMQ $ receiveMessage (clientShellSocket clientSockets)
+
+  case message of
+    Left err ->
+      -- There's no way to recover from this, so just die.
+      messagingError "Jupyter.Client" $
+        "Unexpected failure parsing KernelReply message: " ++ err
+    Right message ->
+      case message of
+        KernelReply _ reply -> return reply
+        _ ->
+          let msgType = T.unpack $ messageTypeText $ messageType $ messageHeader message
+              err = "Unexpected message type on shell socket: " ++ msgType
+          in messagingError "Jupyter.Client" err
+
+sendClientComm :: Comm -> Client ()
+sendClientComm comm = do
+  ClientState { .. } <- ask
+  header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername  comm
+  clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header comm

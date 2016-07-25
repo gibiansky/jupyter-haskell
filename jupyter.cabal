@@ -16,8 +16,7 @@ cabal-version:       >=1.16
 
 library
   exposed-modules:     Jupyter.Kernel
-                       Jupyter.Kernel.Parser
-                       Jupyter.Kernel.ZeroMQ
+                       Jupyter.ZeroMQ
                        Jupyter.Messages
                        Jupyter.Messages.Metadata
                        Jupyter.UUID

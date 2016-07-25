@@ -165,7 +165,7 @@ requestHandler profile execCountVar callbacks req =
     -- KernelInfoRequest message, which is usually the first message that the client sends to the
     -- kernel.
     kernelInfo = KernelInfo
-      { kernelProtocolVersion = [5, 0]
+      { kernelProtocolVersion = "5.0"
       , kernelBanner = "Welcome to the Haskell Calculator Test Kernel!"
       , kernelImplementation = "Calculator-Kernel"
       , kernelImplementationVersion = "1.0"
@@ -216,7 +216,7 @@ handleExecuteRequest execCount (CodeBlock code) KernelCallbacks { .. } =
       sendKernelOutput $ DisplayDataOutput $ displayPlain text <> displayLatex latex
       reply ExecuteOk
   where
-    reply r = return $ ExecuteReply r execCount
+    reply = return . ExecuteReply execCount
 
 handleInspectRequest :: CodeBlock -> CodeOffset -> IO KernelReply
 handleInspectRequest (CodeBlock code) (CodeOffset offset) =

@@ -61,7 +61,7 @@ clientRequestHandler profile callbacks req =
   case req of
     ExecuteRequest (CodeBlock code) _ -> do
       echoStdin code callbacks
-      return $ ExecuteReply ExecuteOk 1
+      return $ ExecuteReply 1 ExecuteOk
     _ -> defaultClientRequestHandler profile (simpleKernelInfo "Stdin") callbacks req
 
 -- | Read some text from the client stdin using the 'KernelCallbacks', then publish that text back

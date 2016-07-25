@@ -45,12 +45,6 @@ For more information, please read the <https://jupyter-client.readthedocs.io/en/
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
 module Jupyter.Messages (
-    -- * All messages
-    Client,
-    Kernel,
-    Message(..),
-    messageHeader,
-
     -- * Client Requests (Shell channel)
     ClientRequest(..),
     CodeBlock(..),
@@ -115,46 +109,17 @@ module Jupyter.Messages (
 import           Data.Text (Text)
 import           Data.Map (Map)
 import qualified Data.Map as Map
-import           Data.Aeson (Value(..), (.=), object, FromJSON, ToJSON(..))
-import           Data.List (intercalate)
+import           Data.Aeson (Value(..), Object, (.:), (.:?), (.=), object, FromJSON(..), ToJSON(..))
+import           Data.Aeson.Types (Parser)
+import           Control.Monad (foldM)
+import           Data.Foldable (toList)
 
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 
-import           Jupyter.Messages.Metadata (IsMessage(..), MessageHeader)
-import           Jupyter.UUID (UUID, uuidToString)
-
--- | Phantom type used to denote messages sent by clients (see 'Message').
-data Client
-
--- | Phantom type used to denote messages sent by kernels (see 'Message').
-data Kernel
-
--- | A sum type representing all Jupyter messages, tagged with their sender application type.
---
--- @'Message' 'Client'@ messages are sent by clients (frontends), whereas @'Message' 'Kernel'@
--- messages are sent by kernels (often in reply to client messages).
---
--- Unlike most messages, 'Comm' messages can be either @'Message' 'Client'@ or @'Message' 'Kernel'@,
--- since both kernels and clients can send 'Comm' messages.
-data Message s where
-        Comm :: MessageHeader -> Comm -> Message s
-        ClientRequest :: MessageHeader -> ClientRequest -> Message Client
-        ClientReply :: MessageHeader -> ClientReply -> Message Client
-        KernelRequest :: MessageHeader -> KernelRequest -> Message Kernel
-        KernelReply :: MessageHeader -> KernelReply -> Message Kernel
-        KernelOutput :: MessageHeader -> KernelOutput -> Message Kernel
-
--- | Extract the 'MessageHeader' from any message.
-messageHeader :: Message s -> MessageHeader
-messageHeader msg =
-  case msg of
-    Comm h _          -> h
-    ClientRequest h _ -> h
-    ClientReply h _   -> h
-    KernelRequest h _ -> h
-    KernelReply h _   -> h
-    KernelOutput h _  -> h
+import           Jupyter.Messages.Metadata (IsMessage(..))
+import qualified Jupyter.UUID as UUID
+import           Jupyter.UUID (UUID)
 
 -- | Most communication from a client to a kernel is initiated by the client on the /shell/ socket.
 --
@@ -284,6 +249,52 @@ instance IsMessage ClientRequest where
       CommInfoRequest{}   -> "comm_info_request"
       KernelInfoRequest{} -> "kernel_info_request"
       ShutdownRequest{}   -> "shutdown_request"
+  parseMessageContent _ msgType =
+    case msgType of
+      "execute_request" -> Just $ \o ->
+        ExecuteRequest <$> o .: "code"
+                       <*> (ExecuteOptions <$> o .: "silent"
+                                           <*> o .: "store_history"
+                                           <*> o .: "allow_stdin"
+                                           <*> o .: "stop_on_error")
+      "inspect_request" -> Just $ \o -> do
+        detailLevelNum <- o .: "detail_level"
+        detailLevel <- case detailLevelNum :: Int of
+                         0 -> return DetailLow
+                         1 -> return DetailHigh
+                         _ -> fail $ "Unknown detail level in inspect_request: " ++ show detailLevelNum
+        InspectRequest <$> o .: "code" <*> o .: "cursor_pos" <*> pure detailLevel
+
+      "history_request" -> Just $ \o ->
+        HistoryRequest <$> (HistoryOptions <$> o .: "output"
+                                           <*> o .: "raw"
+                                           <*> parseHistoryAccessType o)
+      "complete_request" -> Just $ \o -> CompleteRequest <$> o .: "code" <*> o .: "cursor_pos"
+      "is_complete_request" -> Just $ \o -> IsCompleteRequest <$> o .: "code"
+      "comm_info_request" -> Just $ \o -> CommInfoRequest <$> o .:? "target_name"
+      "shutdown_request" -> Just $ \o -> do
+        restart <- o .: "restart"
+        pure $ ShutdownRequest $ if restart
+                                   then Restart
+                                   else NoRestart
+      "connect_request" ->
+        Just $ const $ return ConnectRequest
+      "kernel_info_request" ->
+        Just $ const $ return KernelInfoRequest
+      _ -> Nothing
+    where
+      parseHistoryAccessType :: Object -> Parser HistoryAccessType
+      parseHistoryAccessType o = do
+        accessType <- o .: "hist_access_type"
+        case accessType of
+          "range" -> HistoryRange <$> (HistoryRangeOptions <$> o .: "session"
+                                                           <*> o .: "start"
+                                                           <*> o .: "stop")
+          "tail" -> HistoryTail <$> o .: "n"
+          "search" -> HistorySearch <$> (HistorySearchOptions <$> o .: "n"
+                                                              <*> o .: "pattern"
+                                                              <*> o .: "unique")
+          _ -> fail $ "Unknown history access type in hist_access_type: " ++ accessType
 
 instance ToJSON ClientRequest where
   toJSON req =
@@ -363,6 +374,11 @@ data Restart =
 instance ToJSON Restart where
   toJSON Restart = Bool True
   toJSON NoRestart = Bool False
+
+instance FromJSON Restart where
+  parseJSON (Bool True) = pure Restart
+  parseJSON (Bool False) = pure NoRestart
+  parseJSON _ = fail "Expected boolean for 'restart' field"
 
 -- | The target name (@target_name@) for a 'Comm'.
 --
@@ -453,7 +469,7 @@ data KernelReply =
                  -- 'ExecuteReply' does not include any output data, only a status, as the output
                  -- data is sent via 'DisplayData' messages on the /iopub/ channel (in
                  -- 'KernelOutput' messages).
-                  ExecuteReply ExecuteResult ExecutionCount
+                  ExecuteReply ExecutionCount ExecuteResult 
                  |
                  -- | Reply to an 'InspectRequest'.
                  --
@@ -510,7 +526,7 @@ data KernelReply =
                  --
                  -- The 'CommInfoReply' provides a list of currently open @comm@s with their
                  -- respective target names to the frontend.
-                  CommInfoReply (Map UUID TargetName)
+                  CommInfoReply (Map UUID.UUID TargetName)
                  |
                  -- | Reply to a 'ShutdownRequest'.
                  --
@@ -539,19 +555,71 @@ instance IsMessage KernelReply where
       CommInfoReply{}   -> "comm_info_reply"
       ShutdownReply{}   -> "shutdown_reply"
 
+  parseMessageContent _ msgType =
+    case msgType of
+      "kernel_info_reply" -> Just $ \o ->
+        KernelInfoReply <$> (KernelInfo <$> o .: "protocol_version"
+                                        <*> o .: "banner"
+                                        <*> o .: "implementation"
+                                        <*> o .: "implementation_version"
+                                        <*> o .: "language_info"
+                                        <*> o .: "help_links")
+
+      "execute_reply" -> Just $ \o ->
+        ExecuteReply <$> o .: "execution_count" <*> (ExecuteResult <$> parseResult o (pure ()))
+      "inspect_reply" -> Just $ \o ->
+        InspectReply . InspectResult <$> parseResult o (
+          ifM (o .: "found")
+              (pure Nothing)
+              (Just <$> parseDisplayData o)
+          )
+      "history_reply" -> Just $ \o ->
+        HistoryReply <$> o .: "history"
+      "complete_reply" -> Just $ \o ->
+        CompleteReply . CompleteResult <$> parseResult o (
+          (,,) <$> o .: "matches" <*> (CursorRange <$> o .: "cursor_start" <*> o .: "cursor_end") <*> o .: "metadata")
+      "is_complete_reply" -> Just $ \o ->
+        IsCompleteReply <$> parseJSON (Object o)
+      "connect_reply" -> Just $ \o ->
+        ConnectReply <$> (ConnectInfo <$> o .: "shell_port"
+          <*> o .: "iopub_port"
+          <*> o .: "stdin_port"
+          <*> o .: "hb_port")
+      "comm_info_reply" -> Just $ \o ->
+        CommInfoReply . Map.mapKeys UUID.uuidFromString <$> o .: "comms"
+      "shutdown_reply" -> Just $ \o ->
+        ShutdownReply <$> o .: "restart"
+      _ -> Nothing
+    where
+      parseResult :: Object -> Parser f -> Parser (OperationResult f)
+      parseResult o parsed = do
+        status <- o .: "status"
+        case status :: String of
+          "abort" -> return OperationAbort
+          "ok" -> OperationOk <$> parsed
+          "error" -> OperationError <$> parseJSON (Object o)
+          _ -> fail "Expecting 'abort', 'ok', or 'error' as 'status' key"
+          
+
+ifM :: Monad m => m Bool -> m a -> m a -> m a
+ifM cond thenBranch elseBranch = do
+  bool <- cond
+  if bool then thenBranch else elseBranch
+
+
 instance ToJSON KernelReply where
   toJSON reply =
     object $
       case reply of
         KernelInfoReply KernelInfo { .. } ->
-          [ "protocol_version" .= intercalate "." (map show kernelProtocolVersion)
+          [ "protocol_version" .= kernelProtocolVersion
           , "implementation" .= kernelImplementation
           , "implementation_version" .= kernelImplementationVersion
           , "banner" .= kernelBanner
           , "help_links" .= kernelHelpLinks
           , "language_info" .= kernelLanguageInfo
           ]
-        ExecuteReply (ExecuteResult res) executionCount ->
+        ExecuteReply executionCount (ExecuteResult res) ->
           ("execution_count" .= executionCount) : formatResult res (const [])
         CompleteReply (CompleteResult res) ->
           formatResult res $ \(matches, range, metadata) ->
@@ -561,10 +629,9 @@ instance ToJSON KernelReply where
             , "metadata" .= metadata
             ]
         InspectReply (InspectResult res) ->
-          formatResult res $ \mDisplayData ->
-            case mDisplayData of
-              Nothing -> ("found" .= False) : mimebundleFields (DisplayData mempty)
-              Just displayData -> ("found" .= True) : mimebundleFields displayData
+          formatResult res $ \mDisplayData -> case mDisplayData of
+            Nothing          -> ("found" .= False) : mimebundleFields mempty
+            Just displayData -> ("found" .= True) : mimebundleFields displayData
         HistoryReply historyItems -> ["history" .= historyItems]
         IsCompleteReply codeComplete ->
           case codeComplete of
@@ -580,7 +647,7 @@ instance ToJSON KernelReply where
           ]
         CommInfoReply targetNames ->
           let mkTargetNameDict (TargetName name) = object ["target_name" .= name]
-          in ["comms" .= Map.mapKeys uuidToString (Map.map mkTargetNameDict targetNames)]
+          in ["comms" .= Map.mapKeys UUID.uuidToString (Map.map mkTargetNameDict targetNames)]
         ShutdownReply restart -> ["restart" .= restart]
     where
       formatResult :: OperationResult f -> (f -> [(Text, Value)]) -> [(Text, Value)]
@@ -609,7 +676,7 @@ data ConnectInfo =
 
 -- | A completion match, including all the text (not just the text after the cursor).
 newtype CompletionMatch = CompletionMatch Text
-  deriving (Eq, Ord, Show, ToJSON)
+  deriving (Eq, Ord, Show, ToJSON, FromJSON)
 
 -- | Range (of an input cell) to replace with a completion match.
 data CursorRange =
@@ -637,6 +704,19 @@ instance ToJSON HistoryItem where
       Nothing     -> toJSON (historyItemSession, historyItemLine, historyItemInput)
       Just output -> toJSON (historyItemSession, historyItemLine, historyItemInput, output)
 
+instance FromJSON HistoryItem where
+  parseJSON (Array vec) =
+    case toList vec of
+      [session, line, input] ->
+        HistoryItem <$> parseJSON session <*> parseJSON line <*> parseJSON input <*> pure Nothing
+      [session, line, input, output] ->
+        HistoryItem <$> parseJSON session
+                    <*> parseJSON line
+                    <*> parseJSON input
+                    <*> (Just <$> parseJSON output)
+      _ -> fail "Expecting list of 3 or 4 items for 'history' field items"
+  parseJSON _ = fail "Expecting list for 'history' field items"
+
 -- | Whether a string of code is complete (no more code needs to be entered), incomplete, or unknown
 -- in status.
 --
@@ -663,9 +743,20 @@ data CodeComplete =
                    CodeUnknown
   deriving (Eq, Ord, Show)
 
+instance FromJSON CodeComplete where
+  parseJSON (Object o) = do
+    status <- o .: "status"
+    case status :: String of
+      "complete"   -> pure CodeComplete
+      "incomplete" -> CodeIncomplete <$> o .: "indent"
+      "invalid"    -> pure CodeInvalid
+      "unknown"    -> pure CodeUnknown
+      _ -> fail "Expecting 'complete', 'incomplete', 'invalid', 'unknown' as code complete status"
+  parseJSON _ = fail "Expecting object for 'is_complete_reply' body"
+
 -- | The execution count, represented as an integer (number of cells evaluated up to this point).
 newtype ExecutionCount = ExecutionCount Int
-  deriving (Eq, Ord, Show, Num, ToJSON)
+  deriving (Eq, Ord, Show, Num, ToJSON, FromJSON)
 
 -- | All operations share a similar result structure. They can:
 --   * complete successfully and return a result ('OperationOk')
@@ -742,6 +833,10 @@ data ErrorInfo =
          }
   deriving (Eq, Ord, Show)
 
+instance FromJSON ErrorInfo where
+  parseJSON (Object o) = ErrorInfo <$> o .: "ename" <*> o .: "evalue" <*> o .: "traceback"
+  parseJSON _ = fail "Expecting object with 'ename', 'evalue', and 'traceback' fields"
+
 -- | Reply content for a 'KernelInfoReply', containing core information about the kernel and the
 -- kernel implementation. Pieces of this information are used throughout the frontend for display
 -- purposes.
@@ -749,7 +844,7 @@ data ErrorInfo =
 -- Refer to the lists of available <http://pygments.org/docs/lexers/ Pygments lexers> and <http://codemirror.net/mode/index.html Codemirror modes> for those fields.
 data KernelInfo =
        KernelInfo
-         { kernelProtocolVersion :: [Int]
+         { kernelProtocolVersion :: Text
          -- ^ Version of messaging protocol, usually two or three integers in the format @X.Y@ or @X.Y.Z@.
          -- The first integer indicates major version. It is incremented when there is any backward
          -- incompatible change. The second integer indicates minor version. It is incremented when there is
@@ -802,6 +897,17 @@ instance ToJSON LanguageInfo where
       , maybe [] (\v -> ["nbconvert_exporter" .= v]) languageNbconvertExporter
       ]
 
+instance FromJSON LanguageInfo where
+  parseJSON (Object o) =
+    LanguageInfo <$> o .: "name"
+                 <*> o .: "version"
+                 <*> o .: "mimetype"
+                 <*> o .: "file_extension"
+                 <*> o .:? "pygments_lexer"
+                 <*> o .:? "codemirror_mode"
+                 <*> o .:? "nbconvert_exporter"
+  parseJSON _ = fail "Expecting object for 'language_info' field"
+
 -- | A link to some help text to include in the frontend's help menu.
 data HelpLink =
        HelpLink
@@ -817,6 +923,10 @@ instance ToJSON HelpLink where
   toJSON HelpLink { .. } =
     object ["text" .= helpLinkText, "url" .= helpLinkURL]
 
+instance FromJSON HelpLink where
+  parseJSON (Object o) = HelpLink <$> o .: "text" <*> o .: "url"
+  parseJSON _ = fail "Expected objects in 'help_links' field"
+
 -- | Although usually kernels respond to clients' requests, the request/reply can also go in the
 -- opposite direction: from the kernel to a single frontend. The purpose of these messages (sent on
 -- the /stdin/ socket) is to allow code to request input from the user (in particular reading from
@@ -831,6 +941,10 @@ instance IsMessage KernelRequest where
   getMessageType req =
     case req of
       InputRequest{} -> "input_request"
+  parseMessageContent _ msgType =
+    case msgType of
+      "input_request" -> Just $ \o -> InputRequest <$> (InputOptions <$> o .: "prompt" <*> o .: "password")
+      _               -> Nothing
 
 instance ToJSON KernelRequest where
   toJSON req =
@@ -854,6 +968,20 @@ data ClientReply =
      -- | Returns the text input by the user to the frontend.
       InputReply Text
   deriving (Eq, Ord, Show)
+
+instance ToJSON ClientReply where
+  toJSON rep =
+    object $ case rep of
+      InputReply text -> ["value" .= text]
+
+instance IsMessage ClientReply where
+  getMessageType rep =
+    case rep of
+      InputReply{} -> "input_reply"
+  parseMessageContent _ msgType =
+    case msgType of
+      "input_reply" -> Just $ \o -> InputReply <$> o .: "value"
+      _             -> Nothing
 
 -- | During processing and code execution, the kernel publishes side effects through messages sent
 -- on its /iopub/ socket. Side effects include kernel outputs and notifications, such as writing to
@@ -922,6 +1050,17 @@ instance IsMessage KernelOutput where
       ExecuteErrorOutput{}  -> "error"
       KernelStatusOutput{}  -> "status"
       ClearOutput{}         -> "clear_output"
+  parseMessageContent _ msgType =
+    case msgType of
+      "stream" -> Just $ \o -> StreamOutput <$> o .: "name" <*> o .: "text"
+      "display_data" -> Just $ \o -> DisplayDataOutput <$> parseDisplayData o
+      "execute_input" -> Just $ \o -> ExecuteInputOutput <$> o .: "code" <*> o .: "execution_count"
+      "execute_result" -> Just $ \o ->
+        ExecuteResultOutput <$> o .: "execution_count" <*> parseDisplayData o
+      "error" -> Just $ \o -> ExecuteErrorOutput <$> parseJSON (Object o)
+      "status" -> Just $ \o -> KernelStatusOutput <$> o .: "execution_state"
+      "clear_output" -> Just $ \o -> ClearOutput <$> o .: "wait"
+      _ -> Nothing
 
 instance ToJSON KernelOutput where
   toJSON output =
@@ -950,6 +1089,11 @@ instance ToJSON Stream where
   toJSON StreamStdout = "stdout"
   toJSON StreamStderr = "stderr"
 
+instance FromJSON Stream where
+  parseJSON (String "stdout") = pure StreamStdout
+  parseJSON (String "stderr") = pure StreamStderr
+  parseJSON _ = fail "Expecting either 'stdout' or 'stderr' string"
+
 -- | Whether a 'ClearOutput' should clear the display immediately, or clear the display right before
 -- the next display arrives.
 --
@@ -967,6 +1111,11 @@ instance ToJSON WaitBeforeClear where
   toJSON ClearBeforeNextOutput = Bool True
   toJSON ClearImmediately = Bool False
 
+instance FromJSON WaitBeforeClear where
+  parseJSON (Bool True) = pure ClearBeforeNextOutput
+  parseJSON (Bool False) = pure ClearImmediately
+  parseJSON _ = fail "Expecting true or false as 'wait' field"
+
 -- | Status of the kernel.
 --
 -- Used with 'KernelStatusOutput' messages to let the frontend know what the kernel is doing.
@@ -980,6 +1129,12 @@ instance ToJSON KernelStatus where
   toJSON KernelIdle = "idle"
   toJSON KernelBusy = "busy"
   toJSON KernelStarting = "starting"
+
+instance FromJSON KernelStatus where
+  parseJSON (String "idle") = pure KernelIdle
+  parseJSON (String "busy") = pure KernelBusy
+  parseJSON (String "starting") = pure KernelStarting
+  parseJSON _ = fail "Expecting 'idle', 'busy', 'starting' as 'execution_state' field"
 
 -- | Target module for a @comm_open@ message, optionally used in combination with a 'TargetName' to 
 -- let the receiving side of the 'CommOpen' message know how to create the @comm@.
@@ -1033,6 +1188,14 @@ instance IsMessage Comm where
       CommOpen{}    -> "comm_open"
       CommClose{}   -> "comm_close"
       CommMessage{} -> "comm_msg"
+  parseMessageContent _ msgType =
+    case msgType of
+      "comm_open" -> Just $ \o ->
+        CommOpen <$> o .: "comm_id" <*> o .: "data" <*> o .: "target_name" <*> o .:? "target_module"
+      "comm_close" -> Just $ \o -> CommClose <$> o .: "comm_id" <*> o .: "data"
+      "comm_msg" -> Just $ \o -> CommMessage <$> o .: "comm_id" <*> o .: "data"
+      _ -> Nothing
+
 
 instance ToJSON Comm where
   toJSON comm =
@@ -1082,6 +1245,30 @@ mimebundleFields (DisplayData displayData) =
     encodeDisplayData = Map.mapKeys showMimeType
     encodeDisplayMetadata =
       Map.mapKeys showMimeType . Map.mapMaybeWithKey (\mime _ -> mimeTypeMetadata mime)
+
+parseDisplayData :: Object -> Parser DisplayData
+parseDisplayData o = do
+  displayData <- Map.toList <$> o .: "data"
+  metadata <- o .: "metadata"
+  DisplayData . Map.fromList <$> foldM (collectMetadata metadata) [] displayData
+  where
+    collectMetadata :: Object -> [(MimeType, Text)] -> (Text, Text) -> Parser [(MimeType, Text)]
+    collectMetadata metadata previous (key, value) = do
+      mimetype <- case key of
+        "text/plain" -> return MimePlainText  
+        "text/html" -> return MimeHtml       
+        "image/png" -> do
+          dims <- metadata .: "image/png"
+          MimePng <$> (ImageDimensions <$> dims .: "width" <*> dims .: "height")
+        "image/jpeg" -> do
+          dims <- metadata .: "image/jpeg"
+          MimeJpg <$> (ImageDimensions <$> dims .: "width" <*> dims .: "height")
+        "image/svg+xml" -> return MimeSvg        
+        "text/latex" -> return MimeLatex      
+        "application/javascript" -> return MimeJavascript 
+        _ -> fail $ "Unknown mimetype: " ++ show key
+      return $ (mimetype, value) : previous
+
 
 
 -- | Dimensions of an image, to be included with the 'DisplayData' bundle in the 'MimeType'.

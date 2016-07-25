@@ -1,7 +1,7 @@
 -- | Description : UUID generator and data structure
 --
 -- Generate, parse, and pretty print UUIDs for use with Jupyter.
-module Jupyter.UUID (UUID, random, randoms, uuidToString) where
+module Jupyter.UUID (UUID, random, randoms, uuidToString, uuidFromString) where
 
 import           Control.Monad (mzero, replicateM)
 import           Data.Aeson
@@ -21,6 +21,10 @@ newtype UUID =
 -- | Convert a 'UUID' to a 'String' for transmission or display.
 uuidToString :: UUID -> String
 uuidToString (UUID uuid) = uuid
+
+-- | Convert a 'String' to a 'UUID'.
+uuidFromString :: String -> UUID
+uuidFromString = UUID
 
 -- | Generate a list of random UUIDs.
 randoms :: Int      -- ^ Number of UUIDs to generate.

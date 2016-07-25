@@ -22,9 +22,12 @@ module Jupyter.Messages.Metadata (
   ) where
 
 import           Data.Aeson (FromJSON, ToJSON)
+import           Data.Aeson.Types (Parser, Object)
 import           Data.ByteString (ByteString)
 import           Data.Map (Map)
 import           Data.Text (Text)
+import           Data.Proxy (Proxy(..))
+import           Control.Applicative (Alternative(..))
 
 import           GHC.Exts (IsString)
 
@@ -85,3 +88,10 @@ newtype MessageType = MessageType { messageTypeText :: Text }
 class ToJSON v => IsMessage v where
   -- | Get the message type for a Jupyter message.
   getMessageType :: v -> MessageType
+
+  parseMessageContent :: proxy v -> MessageType -> Maybe (Object -> Parser v)
+
+instance (IsMessage v1, IsMessage v2) => IsMessage (Either v1 v2) where
+  getMessageType = either getMessageType getMessageType
+  parseMessageContent _ msgType = 
+    parseMessageContent (Proxy :: Proxy v1) msgType <|> parseMessageContent (Proxy :: Proxy v2) msgType

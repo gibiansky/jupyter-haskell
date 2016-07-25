@@ -37,8 +37,6 @@ import           Control.Monad (forever)
 import           System.IO (hPutStrLn, stderr)
 import           Data.ByteString (ByteString)
 import           Data.Text (Text)
-import qualified Data.Text as T
-import           Control.Exception (throwIO, Exception)
 
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Control (liftBaseWith)
@@ -47,20 +45,13 @@ import           Control.Concurrent.Async (link2, waitAny)
 
 import           System.ZMQ4.Monadic (ZMQ, Socket, Rep, Router, Pub, async, receive, send)
 
-import           Jupyter.Messages (Client, Message(..), messageHeader, KernelOutput, Comm,
-                                   ClientRequest(..), KernelReply(..), pattern ExecuteOk,
-                                   pattern InspectOk, pattern CompleteOk, CursorRange(..),
-                                   CodeComplete(..), CodeOffset(..), ConnectInfo(..), KernelInfo(..),
-                                   LanguageInfo(..), KernelOutput(..), KernelStatus(..),
-                                   KernelRequest(..), ClientReply(..))
-import           Jupyter.Messages.Metadata (MessageHeader(..), MessageType(..))
-import           Jupyter.Kernel.ZeroMQ (withJupyterSockets, JupyterSockets(..), sendMessage,
-                                        receiveMessage, KernelProfile(..), readProfile)
-
-data MessagingException = MessagingException String 
-  deriving (Eq, Ord, Show)
-
-instance Exception MessagingException
+import           Jupyter.Messages (KernelOutput, Comm, ClientRequest(..), KernelReply(..),
+                                   pattern ExecuteOk, pattern InspectOk, pattern CompleteOk,
+                                   CursorRange(..), CodeComplete(..), CodeOffset(..), ConnectInfo(..),
+                                   KernelInfo(..), LanguageInfo(..), KernelOutput(..),
+                                   KernelStatus(..), KernelRequest(..), ClientReply(..))
+import           Jupyter.ZeroMQ (withKernelSockets, KernelSockets(..), sendMessage, receiveMessage,
+                                 KernelProfile(..), readProfile, messagingError)
 
 -- | Create the simplest possible 'KernelInfo'.
 --
@@ -73,7 +64,7 @@ simpleKernelInfo :: Text -- ^ Kernel name, used for 'kernelImplementation' and '
                  -> KernelInfo
 simpleKernelInfo kernelName =
   KernelInfo
-    { kernelProtocolVersion = [5, 0]
+    { kernelProtocolVersion = "5.0"
     , kernelBanner = ""
     , kernelImplementation = kernelName
     , kernelImplementationVersion = "0.0"
@@ -151,7 +142,7 @@ defaultClientRequestHandler :: KernelProfile -- ^ The profile this kernel is run
 defaultClientRequestHandler KernelProfile{..} kernelInfo _ req =
   return $
     case req of
-      ExecuteRequest{} -> ExecuteReply ExecuteOk 0
+      ExecuteRequest{} -> ExecuteReply 0 ExecuteOk
       InspectRequest{} -> InspectReply $ InspectOk Nothing
       HistoryRequest{} -> HistoryReply []
       CompleteRequest _ (CodeOffset offset) ->
@@ -229,7 +220,7 @@ serveInternal :: Maybe KernelProfile
               -> ClientRequestHandler
               -> IO a
 serveInternal mProfile profileHandler commHandler requestHandler =
-  withJupyterSockets mProfile $ \profile JupyterSockets { .. } -> do
+  withKernelSockets mProfile $ \profile KernelSockets { .. } -> do
     -- If anything is going to be done with the profile information, do it now, after sockets have been
     -- bound but before we start listening on them infinitely.
     liftIO $ profileHandler profile
@@ -239,9 +230,9 @@ serveInternal mProfile profileHandler commHandler requestHandler =
         handlers = (commHandler, requestHandler)
 
     -- Start all listening loops in separate threads.
-    async1 <- loop $ echoHeartbeat heartbeatSocket
-    async2 <- loop $ serveRouter controlSocket key iopubSocket stdinSocket handlers
-    async3 <- loop $ serveRouter shellSocket key iopubSocket stdinSocket handlers
+    async1 <- loop $ echoHeartbeat kernelHeartbeatSocket
+    async2 <- loop $ serveRouter kernelControlSocket key kernelIopubSocket kernelStdinSocket handlers
+    async3 <- loop $ serveRouter kernelShellSocket key kernelIopubSocket kernelStdinSocket handlers
 
     -- Make sure that a fatal exception on any thread kills all threads.
     liftIO $ do
@@ -276,12 +267,11 @@ serveRouter sock key iopub stdin handlers =
     received <- runInBase $ receiveMessage sock
     case received of
       Left err -> liftIO $ hPutStrLn stderr $ "Error receiving message: " ++ err
-      Right message ->
+      Right (header, message) ->
         -- After receiving a message, create the publisher callbacks which use that message as the "parent"
         -- for any responses they generate. This means that when outputs are generated in response to a
         -- message, they automatically inherit that message as a parent.
-        let header = messageHeader message
-            publishers = KernelCallbacks
+        let publishers = KernelCallbacks
               { sendComm = runInBase . sendMessage key iopub header
               , sendKernelOutput = runInBase . sendMessage key iopub header
               , sendKernelRequest = runInBase . stdinCommunicate header
@@ -295,14 +285,8 @@ serveRouter sock key iopub stdin handlers =
       case received of
         Left err ->
           -- There's no way to recover from this, so just die.
-          liftIO $ throwIO $ MessagingException $ "Jupyter.Kernel: Unexpected failure parsing ClientReply message: " ++ err
-        Right message ->
-          case message of
-            ClientReply _ reply -> return reply
-            _ ->
-              let msgType = T.unpack $ messageTypeText $ messageType $ messageHeader message
-                  err = "Jupyter.Kernel: Unexpected message type on stdin socket: " ++  msgType
-              in liftIO $ throwIO $ MessagingException err
+          messagingError "Jupyter.Kernel" $ "Unexpected failure parsing ClientReply message: " ++ err
+        Right (_, message) -> return message
 
 -- | Handle a request using the appropriate handler.
 --
@@ -312,11 +296,11 @@ serveRouter sock key iopub stdin handlers =
 handleRequest :: (KernelReply -> IO ()) -- ^ Callback to send reply messages to the frontend
               -> KernelCallbacks -- ^ Callbacks for publishing outputs to frontends
               -> (CommHandler, ClientRequestHandler) -- ^ Handlers for messages from frontends
-              -> Message Client -- ^ The received message content
+              -> Either ClientRequest Comm -- ^ The received message content
               -> IO ()
 handleRequest sendReply publishers (commHandler, requestHandler) message =
   case message of
-    ClientRequest _ clientRequest ->
+    Left clientRequest ->
       let handle = requestHandler publishers clientRequest >>= sendReply
       in case clientRequest of
         ExecuteRequest{} -> do
@@ -325,8 +309,4 @@ handleRequest sendReply publishers (commHandler, requestHandler) message =
           sendKernelOutput publishers $ KernelStatusOutput KernelIdle
         _ -> handle
 
-    Comm _ comm -> commHandler publishers comm
-    ClientReply _ _ ->
-      -- This case should be unreachable, because client replies are sent only on the stdin socket, but
-      -- `handleRequest` is only used with the shell and control sockets.
-      throwIO $ MessagingException "Jupyter.Kernel: Unexpected ClientReply on Router socket!"
+    Right comm -> commHandler publishers comm

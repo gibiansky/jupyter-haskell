@@ -1,9 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE RankNTypes #-}
-module Jupyter.Kernel.ZeroMQ (
-    withJupyterSockets,
-    JupyterSockets(..),
+{-# LANGUAGE TupleSections #-}
+module Jupyter.ZeroMQ (
+    withKernelSockets,
+    KernelSockets(..),
+    withClientSockets,
+    ClientSockets(..),
     sendMessage,
     receiveMessage,
     KernelProfile(..),
@@ -11,6 +14,10 @@ module Jupyter.Kernel.ZeroMQ (
     IP,
     Transport(..),
     readProfile,
+    messagingError,
+    MessagingException(..),
+    mkRequestHeader,
+    mkReplyHeader,
     ) where
 
 import           Data.Monoid ((<>))
@@ -19,8 +26,12 @@ import           Control.Monad (void, unless)
 import           Text.Read (readMaybe)
 import           Data.Char (isNumber)
 import qualified Data.Map as Map
+import           Control.Exception (throwIO, Exception)
+import           Data.Proxy (Proxy(..))
 
-import           Data.Aeson (FromJSON(..), Value(..), (.:), ToJSON(..), encode, decode, (.=), object)
+import           Data.Aeson (FromJSON(..), Value(..), (.:), ToJSON(..), encode, decode, (.=), object,
+                             eitherDecodeStrict')
+import           Data.Aeson.Types (parseEither)
 import           Control.Monad.IO.Class (MonadIO(..))
 
 import qualified Data.ByteString.Char8 as CBS
@@ -29,35 +40,81 @@ import qualified Data.Text.Encoding as T
 import           Data.Digest.Pure.SHA as SHA
 
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
-                                      Flag(..), send, receive, Receiver, Sender, lastEndpoint, bind)
+                                      Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
+                                      Sender, lastEndpoint, bind)
 
-import           Jupyter.Kernel.Parser (parseClientMessage)
-import           Jupyter.Messages (Client, Message)
-import           Jupyter.Messages.Metadata (MessageHeader(..), IsMessage(..))
+import           Jupyter.Messages.Metadata (MessageHeader(..), IsMessage(..), Username(..))
 import qualified Jupyter.UUID as UUID
+
+parseMessage :: forall v. IsMessage v
+             => [ByteString]
+             -> ByteString
+             -> ByteString
+             -> ByteString
+             -> ByteString
+             -> Either String (MessageHeader, v)
+parseMessage identifiers headerData parentHeaderData metadata content = do
+  header <- parseHeader identifiers headerData parentHeaderData metadata
+  case parseMessageContent (Proxy :: Proxy v) (messageType header) of
+    Nothing -> Left $ "Unrecognize message type: " ++ show (messageType header)
+    Just parser -> do
+      value <- eitherDecodeStrict' content
+      case value of
+        Object obj -> (header,) <$> parseEither parser obj
+        _        -> Left $ "Expected object when parsing message, but got: " ++ show value
+
+-- | Attempt to parse a message header.
+parseHeader :: [ByteString]
+            -> ByteString
+            -> ByteString
+            -> ByteString
+            -> Either String MessageHeader
+parseHeader identifiers headerData parentHeaderData metadata = do
+  header <- eitherDecodeStrict' headerData
+
+  let messageIdentifiers = identifiers
+  messageParent <- if parentHeaderData == "{}"
+                    then return Nothing
+                    else Just <$> parseHeader identifiers parentHeaderData "{}" metadata
+  messageType <- parseEither (.: "msg_type") header
+  messageUsername <- parseEither (.: "username") header
+  messageId <- parseEither (.: "msg_id") header
+  messageSession <- parseEither (.: "session") header
+  messageMetadata <- eitherDecodeStrict' metadata
+
+  return MessageHeader { .. }
+
+data ClientSockets z =
+       ClientSockets
+         { clientHeartbeatSocket :: Socket z Req
+         , clientControlSocket :: Socket z Dealer
+         , clientShellSocket :: Socket z Dealer
+         , clientStdinSocket :: Socket z Dealer
+         , clientIopubSocket :: Socket z Sub
+         }
 
 -- | The collection of <http://zeromq.org/ ZeroMQ> sockets needed to communicate with Jupyter on the
 -- <https://jupyter- Jupyter messaging wire protocol>.
 --
 -- Roles of different sockets are described
 -- <https://jupyter-client.readthedocs.io/en/latest/messaging.html#introduction here>.
-data JupyterSockets z =
-       JupyterSockets
-         { heartbeatSocket :: Socket z Rep  -- ^ The /heartbeat/ socket, which echoes anything sent to
+data KernelSockets z =
+       KernelSockets
+         { kernelHeartbeatSocket :: Socket z Rep  -- ^ The /heartbeat/ socket, which echoes anything sent to
                                             -- it immediately and is used by frontends solely to
                                             -- confirm that the kernel is still alive.
-         , controlSocket :: Socket z Router -- ^ The /control/ socket, optionally used to send
+         , kernelControlSocket :: Socket z Router -- ^ The /control/ socket, optionally used to send
                                             -- 'ClientRequest' messages that deserve immediate
                                             -- response (shutdown requests, etc), rather than
                                             -- long-running requests (execution).
-         , shellSocket :: Socket z Router   -- ^ The /shell/ socket, used to send the majority of
+         , kernelShellSocket :: Socket z Router   -- ^ The /shell/ socket, used to send the majority of
                                             -- 'ClientRequest' messages (introspection, completion,
                                             -- execution, etc) and their responses.
-         , stdinSocket :: Socket z Router   -- ^ The /stdin/ socket, used for communication from a
+         , kernelStdinSocket :: Socket z Router   -- ^ The /stdin/ socket, used for communication from a
                                             -- kernel to a single frontend; currently only used for
                                             -- retrieving standard input from the user, hence the
                                             -- socket name.
-         , iopubSocket :: Socket z Pub      -- ^ The /iopub/ socket, used for publishing 'KernelOutput's
+         , kernelIopubSocket :: Socket z Pub      -- ^ The /iopub/ socket, used for publishing 'KernelOutput's
                                             -- to all frontends.
          }
 
@@ -79,6 +136,25 @@ instance FromJSON Transport where
 -- | Encode a transport mechanism as a JSON string.
 instance ToJSON Transport where
   toJSON TCP = "tcp"
+
+-- | Exception to throw when the messaging protocol is not being observed.
+--
+-- See 'messagingError'.
+data MessagingException = MessagingException String 
+  deriving (Eq, Ord, Show)
+
+instance Exception MessagingException
+
+-- | Throw a 'MessagingException' with a descriptive error message.
+--
+-- Should be used when the messaging protocol is not being properly observed or in other
+-- unrecoverable situations.
+messagingError :: MonadIO m 
+               => String -- ^ Module name in which error happened.
+               -> String -- ^ Error message.
+               -> m a
+messagingError moduleName msg =
+  liftIO $ throwIO $ MessagingException $ concat [moduleName, ": ", msg]
 
 -- | A kernel profile, specifying how the kernel communicates.
 --
@@ -157,28 +233,28 @@ readProfile path = decode <$> LBS.readFile path
 -- | Create and bind all ZeroMQ sockets used for serving a Jupyter kernel. Store info about the
 -- created sockets in a 'KernelProfile', and then run a 'ZMQ' action, providing the used
 -- 'KernelProfile' and the sockets themselves in a 'JupyterSockets' record.
-withJupyterSockets :: Maybe KernelProfile -- ^ Optionally, specify how the ZeroMQ sockets should be
+withKernelSockets :: Maybe KernelProfile -- ^ Optionally, specify how the ZeroMQ sockets should be
                                           -- opened, including the ports on which they should be
                                           -- opened. If 'Nothing' is provided, ports are chosen
                                           -- automatically, and a 'KernelProfile' is generated with
                                           -- the chosen ports.
-                   -> (forall z. KernelProfile -> JupyterSockets z -> ZMQ z a) -- ^ Callback to
+                   -> (forall z. KernelProfile -> KernelSockets z -> ZMQ z a) -- ^ Callback to
                                                                                -- invoke with the
                                                                                -- socket info and
                                                                                -- ZeroMQ sockets.
                    -> IO a
-withJupyterSockets mProfile callback = runZMQ $ do
-  heartbeatSocket <- socket Rep
-  controlSocket <- socket Router
-  shellSocket <- socket Router
-  stdinSocket <- socket Router
-  iopubSocket <- socket Pub
+withKernelSockets mProfile callback = runZMQ $ do
+  kernelHeartbeatSocket <- socket Rep
+  kernelControlSocket <- socket Router
+  kernelShellSocket <- socket Router
+  kernelStdinSocket <- socket Router
+  kernelIopubSocket <- socket Pub
 
-  heartbeatPort <- bindSocket mProfile profileHeartbeatPort heartbeatSocket
-  controlPort <- bindSocket mProfile profileControlPort controlSocket
-  shellPort <- bindSocket mProfile profileShellPort shellSocket
-  stdinPort <- bindSocket mProfile profileStdinPort stdinSocket
-  iopubPort <- bindSocket mProfile profileIopubPort iopubSocket
+  heartbeatPort <- bindSocket mProfile profileHeartbeatPort kernelHeartbeatSocket
+  controlPort   <- bindSocket mProfile profileControlPort   kernelControlSocket
+  shellPort     <- bindSocket mProfile profileShellPort     kernelShellSocket
+  stdinPort     <- bindSocket mProfile profileStdinPort     kernelStdinSocket
+  iopubPort     <- bindSocket mProfile profileIopubPort     kernelIopubSocket
 
   let profile = KernelProfile
         { profileTransport = maybe TCP profileTransport mProfile
@@ -191,7 +267,46 @@ withJupyterSockets mProfile callback = runZMQ $ do
         , profileSignatureKey = maybe "" profileSignatureKey mProfile
         }
 
-  callback profile JupyterSockets { .. }
+  callback profile KernelSockets { .. }
+
+-- | Create and bind all ZeroMQ sockets used for using a Jupyter kernel from a client. Store info about the
+-- created sockets in a 'KernelProfile', and then run a 'ZMQ' action, providing the used
+-- 'KernelProfile' and the sockets themselves in a 'JupyterSockets' record.
+withClientSockets :: Maybe KernelProfile -- ^ Optionally, specify how the ZeroMQ sockets should be
+                                          -- opened, including the ports on which they should be
+                                          -- opened. If 'Nothing' is provided, ports are chosen
+                                          -- automatically, and a 'KernelProfile' is generated with
+                                          -- the chosen ports.
+                   -> (forall z. KernelProfile -> ClientSockets z -> ZMQ z a) -- ^ Callback to
+                                                                               -- invoke with the
+                                                                               -- socket info and
+                                                                               -- ZeroMQ sockets.
+                   -> IO a
+withClientSockets mProfile callback = runZMQ $ do
+  clientHeartbeatSocket <- socket Req
+  clientControlSocket   <- socket Dealer
+  clientShellSocket     <- socket Dealer
+  clientStdinSocket     <- socket Dealer
+  clientIopubSocket     <- socket Sub
+
+  heartbeatPort <- bindSocket mProfile profileHeartbeatPort clientHeartbeatSocket
+  controlPort   <- bindSocket mProfile profileControlPort   clientControlSocket
+  shellPort     <- bindSocket mProfile profileShellPort     clientShellSocket
+  stdinPort     <- bindSocket mProfile profileStdinPort     clientStdinSocket
+  iopubPort     <- bindSocket mProfile profileIopubPort     clientIopubSocket
+
+  let profile = KernelProfile
+        { profileTransport = maybe TCP profileTransport mProfile
+        , profileIp = maybe "127.0.0.1" profileIp mProfile
+        , profileHeartbeatPort = heartbeatPort
+        , profileControlPort = controlPort
+        , profileShellPort = shellPort
+        , profileStdinPort = stdinPort
+        , profileIopubPort = iopubPort
+        , profileSignatureKey = maybe "" profileSignatureKey mProfile
+        }
+
+  callback profile ClientSockets { .. }
 
 extractAddress :: Maybe KernelProfile -> (KernelProfile -> Int) -> String
 extractAddress mProfile accessor = "tcp://127.0.0.1:" ++ maybe "*" (show . accessor) mProfile
@@ -210,7 +325,7 @@ parsePort s = readMaybe num
     num = reverse (takeWhile isNumber (reverse s))
 
 -- | Read a client message from a ZeroMQ socket.
-receiveMessage :: Receiver a => Socket z a -> ZMQ z (Either String (Message Client))
+receiveMessage :: (IsMessage v, Receiver a) => Socket z a -> ZMQ z (Either String (MessageHeader, v))
 receiveMessage sock = do
   -- Read all identifiers until the identifier/message delimiter.
   idents <- readUntil sock "<IDS|MSG>"
@@ -223,7 +338,7 @@ receiveMessage sock = do
   metadata <- receive sock
   content <- receive sock
 
-  return $ parseClientMessage idents headerData parentHeader metadata content
+  return $ parseMessage idents headerData parentHeader metadata content
 
 -- | Read data from the socket until we hit an ending string. Return all data as a list, which does
 -- not include the ending string.
@@ -246,7 +361,6 @@ encodeHeader MessageHeader { .. } =
                    , "msg_type" .= messageType
                    ]
 
-{-
 mkRequestHeader :: IsMessage v => UUID.UUID -> Username -> v -> IO MessageHeader
 mkRequestHeader session username content = do
   uuid <- UUID.random
@@ -260,7 +374,6 @@ mkRequestHeader session username content = do
       , messageUsername = username
       , messageType = getMessageType content
       }
--}
 
 mkReplyHeader :: IsMessage v => MessageHeader -> v -> IO MessageHeader
 mkReplyHeader parentHeader content = do
@@ -284,8 +397,7 @@ sendMessage :: (IsMessage v, Sender a)
             -> MessageHeader -- ^ Header for the message.
             -> v -- ^ Data type representing the message to be send.
             -> ZMQ z ()
-sendMessage hmacKey sock parentHeader content = do
-  header <- liftIO $ mkReplyHeader parentHeader content
+sendMessage hmacKey sock header content = do
   let parentHeaderStr = maybe "{}" encodeHeader $ messageParent header
       idents = messageIdentifiers header
       metadata = "{}"
