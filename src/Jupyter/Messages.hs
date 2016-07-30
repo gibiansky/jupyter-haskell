@@ -113,6 +113,7 @@ import           Data.Aeson (Value(..), Object, (.:), (.:?), (.=), object, FromJ
 import           Data.Aeson.Types (Parser)
 import           Control.Monad (foldM)
 import           Data.Foldable (toList)
+import           Control.Applicative ((<|>))
 
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
@@ -249,9 +250,9 @@ instance IsMessage ClientRequest where
       CommInfoRequest{}   -> "comm_info_request"
       KernelInfoRequest{} -> "kernel_info_request"
       ShutdownRequest{}   -> "shutdown_request"
-  parseMessageContent _ msgType =
-    case msgType of
-      "execute_request" -> Just $ \o ->
+  parseMessageContent msgType =
+     case msgType of
+      "execute_request" ->  Just $ \o ->
         ExecuteRequest <$> o .: "code"
                        <*> (ExecuteOptions <$> o .: "silent"
                                            <*> o .: "store_history"
@@ -554,8 +555,7 @@ instance IsMessage KernelReply where
       ConnectReply{}    -> "connect_reply"
       CommInfoReply{}   -> "comm_info_reply"
       ShutdownReply{}   -> "shutdown_reply"
-
-  parseMessageContent _ msgType =
+  parseMessageContent msgType =
     case msgType of
       "kernel_info_reply" -> Just $ \o ->
         KernelInfoReply <$> (KernelInfo <$> o .: "protocol_version"
@@ -568,27 +568,25 @@ instance IsMessage KernelReply where
       "execute_reply" -> Just $ \o ->
         ExecuteReply <$> o .: "execution_count" <*> (ExecuteResult <$> parseResult o (pure ()))
       "inspect_reply" -> Just $ \o ->
-        InspectReply . InspectResult <$> parseResult o (
-          ifM (o .: "found")
-              (pure Nothing)
-              (Just <$> parseDisplayData o)
-          )
-      "history_reply" -> Just $ \o ->
-        HistoryReply <$> o .: "history"
+        InspectReply . InspectResult <$> parseResult o
+                                           (ifM (o .: "found") (pure Nothing)
+                                              (Just <$> parseDisplayData o))
+      "history_reply" -> Just $ \o -> HistoryReply <$> o .: "history"
       "complete_reply" -> Just $ \o ->
-        CompleteReply . CompleteResult <$> parseResult o (
-          (,,) <$> o .: "matches" <*> (CursorRange <$> o .: "cursor_start" <*> o .: "cursor_end") <*> o .: "metadata")
-      "is_complete_reply" -> Just $ \o ->
-        IsCompleteReply <$> parseJSON (Object o)
+        CompleteReply . CompleteResult <$> parseResult o
+                                             ((,,) <$> o .: "matches"
+                                                   <*> (CursorRange <$> o .: "cursor_start"
+                                                                    <*> o .: "cursor_end")
+                                                   <*> o .: "metadata")
+      "is_complete_reply" -> Just $ \o -> IsCompleteReply <$> parseJSON (Object o)
       "connect_reply" -> Just $ \o ->
-        ConnectReply <$> (ConnectInfo <$> o .: "shell_port"
-          <*> o .: "iopub_port"
-          <*> o .: "stdin_port"
-          <*> o .: "hb_port")
+        ConnectReply <$> (ConnectInfo <$> (o .: "shell_port" <|> o .: "shell")
+                                      <*> (o .: "iopub_port" <|> o .: "iopub")
+                                      <*> (o .: "stdin_port" <|> o .: "stdin")
+                                      <*> (o .: "hb_port" <|> o .: "hb"))
       "comm_info_reply" -> Just $ \o ->
         CommInfoReply . Map.mapKeys UUID.uuidFromString <$> o .: "comms"
-      "shutdown_reply" -> Just $ \o ->
-        ShutdownReply <$> o .: "restart"
+      "shutdown_reply" -> Just $ \o -> ShutdownReply <$> o .: "restart"
       _ -> Nothing
     where
       parseResult :: Object -> Parser f -> Parser (OperationResult f)
@@ -596,9 +594,9 @@ instance IsMessage KernelReply where
         status <- o .: "status"
         case status :: String of
           "abort" -> return OperationAbort
-          "ok" -> OperationOk <$> parsed
+          "ok"    -> OperationOk <$> parsed
           "error" -> OperationError <$> parseJSON (Object o)
-          _ -> fail "Expecting 'abort', 'ok', or 'error' as 'status' key"
+          _       -> fail "Expecting 'abort', 'ok', or 'error' as 'status' key"
           
 
 ifM :: Monad m => m Bool -> m a -> m a -> m a
@@ -941,7 +939,7 @@ instance IsMessage KernelRequest where
   getMessageType req =
     case req of
       InputRequest{} -> "input_request"
-  parseMessageContent _ msgType =
+  parseMessageContent msgType =
     case msgType of
       "input_request" -> Just $ \o -> InputRequest <$> (InputOptions <$> o .: "prompt" <*> o .: "password")
       _               -> Nothing
@@ -978,7 +976,7 @@ instance IsMessage ClientReply where
   getMessageType rep =
     case rep of
       InputReply{} -> "input_reply"
-  parseMessageContent _ msgType =
+  parseMessageContent msgType =
     case msgType of
       "input_reply" -> Just $ \o -> InputReply <$> o .: "value"
       _             -> Nothing
@@ -1050,7 +1048,7 @@ instance IsMessage KernelOutput where
       ExecuteErrorOutput{}  -> "error"
       KernelStatusOutput{}  -> "status"
       ClearOutput{}         -> "clear_output"
-  parseMessageContent _ msgType =
+  parseMessageContent msgType =
     case msgType of
       "stream" -> Just $ \o -> StreamOutput <$> o .: "name" <*> o .: "text"
       "display_data" -> Just $ \o -> DisplayDataOutput <$> parseDisplayData o
@@ -1188,8 +1186,8 @@ instance IsMessage Comm where
       CommOpen{}    -> "comm_open"
       CommClose{}   -> "comm_close"
       CommMessage{} -> "comm_msg"
-  parseMessageContent _ msgType =
-    case msgType of
+  parseMessageContent msgType =
+     case msgType of
       "comm_open" -> Just $ \o ->
         CommOpen <$> o .: "comm_id" <*> o .: "data" <*> o .: "target_name" <*> o .:? "target_module"
       "comm_close" -> Just $ \o -> CommClose <$> o .: "comm_id" <*> o .: "data"

@@ -19,7 +19,7 @@ import           System.Directory.Extra (withCurrentDirectory)
 import           System.ZMQ4.Monadic (socket, Req(..), send, receive, bind, connect, ZMQ, Socket,
                                       SocketType)
 
-import           Jupyter.Kernel.ZeroMQ (KernelProfile)
+import           Jupyter.ZeroMQ (KernelProfile)
 
 -- Create a temporary directory and execute an action with that temporary directory as the working
 -- directory. This is not threadsafe, since working directories are global values.

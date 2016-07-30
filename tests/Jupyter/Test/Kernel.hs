@@ -16,7 +16,7 @@ import           Data.Aeson (encode)
 import           System.ZMQ4.Monadic (socket, Req(..), Dealer(..), send, receive, bind, connect, ZMQ,
                                       Socket, SocketType, runZMQ)
 
-import           Jupyter.Kernel.ZeroMQ
+import           Jupyter.ZeroMQ
 import           Jupyter.Kernel
 import           Jupyter.Messages
 import           Jupyter.Messages.Metadata
@@ -57,7 +57,7 @@ testKernel = testCaseSteps "Simple Kernel" $ \step -> do
   where
     kernelInfo :: KernelInfo
     kernelInfo = KernelInfo
-      { kernelProtocolVersion = [1, 2, 3]
+      { kernelProtocolVersion = "1.2.3"
       , kernelBanner = "Banner"
       , kernelImplementation = "kernel"
       , kernelImplementationVersion = "1.0.0"

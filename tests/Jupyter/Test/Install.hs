@@ -5,18 +5,19 @@ module Jupyter.Test.Install (installTests) where
 import           Data.Monoid (mempty)
 import           Data.List (isInfixOf)
 import           Control.Monad (forM_, (=<<))
-import           System.Environment (setEnv)
+import           System.Environment (setEnv, lookupEnv)
 import           Control.Exception (catch, Exception)
 import           Data.Proxy (Proxy(..))
 import           System.Directory (setPermissions, getPermissions, Permissions(..), canonicalizePath,
                                    getDirectoryContents, createDirectoryIfMissing, removeFile,
                                    doesFileExist)
+import Data.Maybe (fromMaybe)
 import           System.IO (stderr, stdout)
 import qualified Data.ByteString.Char8 as CBS
 import qualified Data.Text as T
 
 import           System.IO.Extra (withTempDir)
-import           Control.Exception.Extra (try_)
+import           Control.Exception.Extra (try_, bracket)
 
 import           System.IO.Silently (hCapture_)
 
@@ -60,63 +61,73 @@ testVersionNumberPrinting = testCase "Version number printing" $ do
     parseThenShow str =
       Just str @=? (I.showVersion <$> I.parseVersion str)
 
+withPath :: String -> IO a -> IO a
+withPath newPath action = 
+  bracket resetPath (setEnv "PATH") (const action)
+  where 
+    resetPath = do
+      path <- lookupEnv "PATH"
+      setEnv "PATH" newPath
+      return $ fromMaybe "" path
+
+
 -- Test that `jupyter` is found by `which` if it is on the PATH, and isn't found if its not on the
 -- path or isn't executable. Ensures that all returned paths are absolute and canonical.
 testFindingJupyterExecutable :: TestTree
 testFindingJupyterExecutable = testCase "PATH searching" $
   -- Run the entire test in a temporary directory.
-  inTempDir $ \tmp -> do
+  inTempDir $ \tmp ->
     -- Set up a PATH that has both relative and absolute paths.
-    setEnv "PATH" $ ".:test-path/twice:" ++ tmp ++ "/test-path-2"
+    withPath (".:test-path/twice:" ++ tmp ++ "/test-path-2") $
 
-    -- For each possible location test executable finding.
-    forM_ [".", "test-path/twice", "test-path-2"] $ \prefix -> do
-      let path = prefix ++ "/jupyter"
-      createDirectoryIfMissing True prefix
+      -- For each possible location test executable finding.
+      forM_ [".", "test-path/twice", "test-path-2"] $ \prefix -> do
+        let path = prefix ++ "/jupyter"
+        createDirectoryIfMissing True prefix
 
-      -- When the file doesn't exist it should not be found.
-      which "jupyter" `shouldThrow` (Proxy :: Proxy InstallException)
+        -- When the file doesn't exist it should not be found.
+        which "jupyter" `shouldThrow` (Proxy :: Proxy InstallException)
 
-      -- When the file is not executable it should not be found.
-      writeFile path "#!/bin/bash\ntrue"
-      which "jupyter" `shouldThrow` (Proxy :: Proxy InstallException)
+        -- When the file is not executable it should not be found.
+        writeFile path "#!/bin/bash\ntrue"
+        which "jupyter" `shouldThrow` (Proxy :: Proxy InstallException)
 
-      -- When the file is executable, it should be found, and be an absolute path
-      -- that ultimately resolves to what we expect.
-      setExecutable path
-      jupyterLoc <- which "jupyter"
-      expectedLoc <- canonicalizePath $ tmp ++ "/" ++ prefix ++ "/jupyter"
-      expectedLoc @=? jupyterLoc
+        -- When the file is executable, it should be found, and be an absolute path
+        -- that ultimately resolves to what we expect.
+        setExecutable path
+        jupyterLoc <- which "jupyter"
+        expectedLoc <- canonicalizePath $ tmp ++ "/" ++ prefix ++ "/jupyter"
+        expectedLoc @=? jupyterLoc
 
-      -- Clean up to avoid messing with future tests.
-      removeFile path
+        -- Clean up to avoid messing with future tests.
+        removeFile path
 
 testJupyterVersionReading :: TestTree
 testJupyterVersionReading = testCase "jupyter --version parsing" $
-  inTempDir $ \tmp -> do
+  inTempDir $ \tmp ->
     -- Set up a jupyter executable that outputs what we expect.
-    setEnv "PATH" "."
-    writeMockJupyter ""
-    setExecutable "jupyter"
-    path <- which "jupyter"
+    withPath  "." $ do
+      writeMockJupyter ""
+      setExecutable "jupyter"
+      path <- which "jupyter"
 
-    -- Version too low.
-    writeMockJupyter "1.2.0"
-    verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
+      -- Version too low.
+      writeMockJupyter "1.2.0"
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
 
-    -- Could not parse output.
-    writeMockJupyter "..."
-    verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
+      -- Could not parse output.
+      writeMockJupyter "..."
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
 
-    writeMockJupyter "asdf"
-    verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
+      writeMockJupyter "asdf"
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
 
-    -- Works.
-    writeMockJupyter "3.0.0"
-    verifyJupyterCommand path
+      -- Works.
+      writeMockJupyter "3.0.0"
+      verifyJupyterCommand path
 
-    writeMockJupyter "4.1.4000"
-    verifyJupyterCommand path
+      writeMockJupyter "4.1.4000"
+      verifyJupyterCommand path
 
 writeMockJupyter :: String -> IO ()
 writeMockJupyter out = writeMockJupyter' out "" 0
@@ -133,21 +144,21 @@ writeMockJupyter' stdoutOut stderrOut errCode =
 
 testStderrIsUntouched :: TestTree
 testStderrIsUntouched = testCase "stderr is piped through" $
-  inTempDir $ \tmp -> do
+  inTempDir $ \tmp ->
     -- Set up a jupyter executable that outputs something to stderr.
-    setEnv "PATH" "."
-    let msg = "An error"
-    writeMockJupyter' "Some output" msg 0
-    setExecutable "jupyter"
+    withPath  "." $ do
+      let msg = "An error"
+      writeMockJupyter' "Some output" msg 0
+      setExecutable "jupyter"
 
-    -- Check that stderr goes through as usual.
-    stderrOut <- hCapture_ [stderr] (runJupyterCommand "jupyter" [])
-    msg @=? stderrOut
+      -- Check that stderr goes through as usual.
+      stderrOut <- hCapture_ [stderr] (runJupyterCommand "jupyter" [])
+      msg @=? stderrOut
 
-    -- Check that stdout of the command is not output but is captured.
-    writeMockJupyter' "stdout" "" 0
-    stdoutOut <- hCapture_ [stdout] (runJupyterCommand "jupyter" [])
-    "" @=? stdoutOut
+      -- Check that stdout of the command is not output but is captured.
+      writeMockJupyter' "stdout" "" 0
+      stdoutOut <- hCapture_ [stdout] (runJupyterCommand "jupyter" [])
+      "" @=? stdoutOut
 
 testCorrectJupyterVersionsAccepted :: TestTree
 testCorrectJupyterVersionsAccepted = testCase "Correct jupyter versions accepted" $ do
@@ -200,20 +211,20 @@ testEndToEndInstall = testCase "installs end-to-end" $
   inTempDir $ \tmp -> do
     kernelspec <- createTestKernelspec tmp
 
-    setEnv "PATH" "."
-    writeFile "jupyter" $ jupyterScript True
-    setExecutable "jupyter"
+    withPath "." $ do
+      writeFile "jupyter" $ jupyterScript True
+      setExecutable "jupyter"
 
-    result <- installKernel InstallLocal kernelspec
-    case result of
-      InstallFailed msg -> assertFailure $ "Failed to install kernelspec: " ++ T.unpack msg
-      _                 -> return ()
+      result <- installKernel InstallLocal kernelspec
+      case result of
+        InstallFailed msg -> assertFailure $ "Failed to install kernelspec: " ++ T.unpack msg
+        _                 -> return ()
 
-    writeFile "jupyter" $ jupyterScript False
-    result <- installKernel InstallGlobal kernelspec
-    case result of
-      InstallFailed msg -> assertFailure $ "Failed to install kernelspec: " ++ T.unpack msg
-      _                 -> return ()
+      writeFile "jupyter" $ jupyterScript False
+      result <- installKernel InstallGlobal kernelspec
+      case result of
+        InstallFailed msg -> assertFailure $ "Failed to install kernelspec: " ++ T.unpack msg
+        _                 -> return ()
   where
     jupyterScript user =
       unlines

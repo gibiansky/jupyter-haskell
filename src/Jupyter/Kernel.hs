@@ -51,7 +51,7 @@ import           Jupyter.Messages (KernelOutput, Comm, ClientRequest(..), Kernel
                                    KernelInfo(..), LanguageInfo(..), KernelOutput(..),
                                    KernelStatus(..), KernelRequest(..), ClientReply(..))
 import           Jupyter.ZeroMQ (withKernelSockets, KernelSockets(..), sendMessage, receiveMessage,
-                                 KernelProfile(..), readProfile, messagingError)
+                                 KernelProfile(..), readProfile, messagingError, mkReplyHeader)
 
 -- | Create the simplest possible 'KernelInfo'.
 --
@@ -272,11 +272,14 @@ serveRouter sock key iopub stdin handlers =
         -- for any responses they generate. This means that when outputs are generated in response to a
         -- message, they automatically inherit that message as a parent.
         let publishers = KernelCallbacks
-              { sendComm = runInBase . sendMessage key iopub header
-              , sendKernelOutput = runInBase . sendMessage key iopub header
+              { sendComm = runInBase . sendReplyMessage key iopub header
+              , sendKernelOutput = runInBase . sendReplyMessage key iopub header
               , sendKernelRequest = runInBase . stdinCommunicate header
               }
-            sendReply = runInBase . sendMessage key sock header
+            sendReply = runInBase . sendReplyMessage key sock header
+            sendReplyMessage k s parentHeader msg = do
+              replyHeader <- liftIO $ mkReplyHeader parentHeader msg 
+              sendMessage k s replyHeader msg
         in handleRequest sendReply publishers handlers message
   where
     stdinCommunicate header req = do

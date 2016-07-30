@@ -77,21 +77,24 @@ newtype Username = Username Text
 newtype MessageType = MessageType { messageTypeText :: Text }
   deriving (Eq, Ord, Show, FromJSON, ToJSON, IsString)
 
--- | Jupyter messages are represented as a variety of datatypes,
--- depending on where in the messaging protocol the message is used (for instance,
--- 'Jupyter.Messages.ClientRequest' or 'Jupyter.Messages.Comm').
+-- | Jupyter messages are represented as a variety of datatypes, depending on where in the messaging
+-- protocol the message is used (for instance, 'Jupyter.Messages.ClientRequest' or
+-- 'Jupyter.Messages.Comm').
 --
--- Given any message, however, you need to be able to get a 'MessageType' for it,
--- so that when encoding the message onto the wire you can include the message type
--- in the header. The 'IsMessage' typeclass provides a single method, 'getMessageType',
--- which gets the message type of any Jupyter message. 
+-- Given any message, however, you need to be able to get a 'MessageType' for it, so that when
+-- encoding the message onto the wire you can include the message type in the header. The
+-- 'IsMessage' typeclass provides a single method, 'getMessageType', which gets the message type of
+-- any Jupyter message.
 class ToJSON v => IsMessage v where
   -- | Get the message type for a Jupyter message.
   getMessageType :: v -> MessageType
 
-  parseMessageContent :: proxy v -> MessageType -> Maybe (Object -> Parser v)
+  parseMessageContent :: MessageType -> Maybe (Object -> Parser v)
 
 instance (IsMessage v1, IsMessage v2) => IsMessage (Either v1 v2) where
   getMessageType = either getMessageType getMessageType
-  parseMessageContent _ msgType = 
-    parseMessageContent (Proxy :: Proxy v1) msgType <|> parseMessageContent (Proxy :: Proxy v2) msgType
+  parseMessageContent msgType = 
+    fmap3 Left (parseMessageContent msgType) <|> fmap3 Right (parseMessageContent msgType)
+    where
+      fmap3 :: (a -> b) -> Maybe (Object -> Parser a) -> Maybe (Object -> Parser b)
+      fmap3 = fmap . fmap . fmap

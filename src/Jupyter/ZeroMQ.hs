@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Jupyter.ZeroMQ (
     withKernelSockets,
     KernelSockets(..),
@@ -27,6 +28,7 @@ import           Text.Read (readMaybe)
 import           Data.Char (isNumber)
 import qualified Data.Map as Map
 import           Control.Exception (throwIO, Exception)
+import           Control.Monad.Catch (catch)
 import           Data.Proxy (Proxy(..))
 
 import           Data.Aeson (FromJSON(..), Value(..), (.:), ToJSON(..), encode, decode, (.=), object,
@@ -41,10 +43,11 @@ import           Data.Digest.Pure.SHA as SHA
 
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
                                       Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
-                                      Sender, lastEndpoint, bind)
+                                      Sender, lastEndpoint, bind, connect, ZMQError)
 
 import           Jupyter.Messages.Metadata (MessageHeader(..), IsMessage(..), Username(..))
 import qualified Jupyter.UUID as UUID
+
 
 parseMessage :: forall v. IsMessage v
              => [ByteString]
@@ -55,10 +58,10 @@ parseMessage :: forall v. IsMessage v
              -> Either String (MessageHeader, v)
 parseMessage identifiers headerData parentHeaderData metadata content = do
   header <- parseHeader identifiers headerData parentHeaderData metadata
-  case parseMessageContent (Proxy :: Proxy v) (messageType header) of
+  case parseMessageContent (messageType header) of
     Nothing -> Left $ "Unrecognize message type: " ++ show (messageType header)
-    Just parser -> do
-      value <- eitherDecodeStrict' content
+    Just parser ->  do
+      value <-  eitherDecodeStrict' content
       case value of
         Object obj -> (header,) <$> parseEither parser obj
         _        -> Left $ "Expected object when parsing message, but got: " ++ show value
@@ -289,11 +292,11 @@ withClientSockets mProfile callback = runZMQ $ do
   clientStdinSocket     <- socket Dealer
   clientIopubSocket     <- socket Sub
 
-  heartbeatPort <- bindSocket mProfile profileHeartbeatPort clientHeartbeatSocket
-  controlPort   <- bindSocket mProfile profileControlPort   clientControlSocket
-  shellPort     <- bindSocket mProfile profileShellPort     clientShellSocket
-  stdinPort     <- bindSocket mProfile profileStdinPort     clientStdinSocket
-  iopubPort     <- bindSocket mProfile profileIopubPort     clientIopubSocket
+  heartbeatPort <- connectSocket mProfile 10730 profileHeartbeatPort clientHeartbeatSocket
+  controlPort   <- connectSocket mProfile 11840 profileControlPort   clientControlSocket
+  shellPort     <- connectSocket mProfile 12950 profileShellPort     clientShellSocket
+  stdinPort     <- connectSocket mProfile 13160 profileStdinPort     clientStdinSocket
+  iopubPort     <- connectSocket mProfile 14270 profileIopubPort     clientIopubSocket
 
   let profile = KernelProfile
         { profileTransport = maybe TCP profileTransport mProfile
@@ -311,12 +314,32 @@ withClientSockets mProfile callback = runZMQ $ do
 extractAddress :: Maybe KernelProfile -> (KernelProfile -> Int) -> String
 extractAddress mProfile accessor = "tcp://127.0.0.1:" ++ maybe "*" (show . accessor) mProfile
 
+connectSocket :: forall z t. Maybe KernelProfile -> Port -> (KernelProfile -> Int) -> Socket z t -> ZMQ z Int
+connectSocket mProfile startPort accessor sock = do
+  case mProfile of
+    Just _  -> connect sock (extractAddress mProfile accessor)
+    Nothing -> findRandomPort 100 startPort
+
+  endpoint sock
+
+  where
+    findRandomPort 0 _ = fail "fatal error (Jupyter.ZeroMQ): Could not find port to connect to."
+    findRandomPort triesLeft tryPort =
+      let handler :: ZMQError -> ZMQ z ()
+          handler = const $ findRandomPort (triesLeft - 1) (tryPort + 1)
+      in connect sock ("tcp://127.0.0.1:" ++ show tryPort) `catch` handler
+
+
 bindSocket :: Maybe KernelProfile -> (KernelProfile -> Int) -> Socket z t -> ZMQ z Int
 bindSocket mProfile accessor sock = do
   bind sock (extractAddress mProfile accessor)
+  endpoint sock
+
+endpoint :: Socket z t -> ZMQ z Int
+endpoint sock = do
   endpointString <- lastEndpoint sock
   case parsePort endpointString of
-    Nothing -> fail "fatal error (Jupyter.Kernel.ZeroMQ): could not parse port as integer."
+    Nothing   -> fail "fatal error (Jupyter.ZeroMQ): could not parse port as integer."
     Just port -> return port
 
 parsePort :: String -> Maybe Int
@@ -337,8 +360,7 @@ receiveMessage sock = do
   parentHeader <- receive sock
   metadata <- receive sock
   content <- receive sock
-
-  return $ parseMessage idents headerData parentHeader metadata content
+  return $ parseMessage idents headerData parentHeader metadata content 
 
 -- | Read data from the socket until we hit an ending string. Return all data as a list, which does
 -- not include the ending string.

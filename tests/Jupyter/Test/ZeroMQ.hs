@@ -13,7 +13,7 @@ import           Data.Aeson (encode)
 import           System.ZMQ4.Monadic (socket, Req(..), send, receive, bind, connect, ZMQ, Socket,
                                       SocketType)
 
-import           Jupyter.Kernel.ZeroMQ
+import           Jupyter.ZeroMQ
 
 import           Utils (inTempDir, connectedSocket)
 
@@ -23,12 +23,12 @@ zmqTests = testGroup "ZeroMQ Tests" [testHeartbeatSocket, testReadProfile]
 -- Test that messages can be sent and received on the heartbeat socket.
 testHeartbeatSocket :: TestTree
 testHeartbeatSocket = testCase "Heartbeat Socket" $
-  withJupyterSockets Nothing $ \profile socks -> do
+  withKernelSockets Nothing $ \profile socks -> do
     heartbeatClientSocket <- connectedSocket profile profileHeartbeatPort Req
 
     let message = "heartbeat"
     send heartbeatClientSocket [] message
-    received <- receive (heartbeatSocket socks)
+    received <- receive (kernelHeartbeatSocket socks)
     liftIO $ message @=? received
 
 -- Test that kernel profile encoding and decoding works as expected.
