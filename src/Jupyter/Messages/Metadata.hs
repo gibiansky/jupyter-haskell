@@ -55,7 +55,7 @@ data MessageHeader =
          -- ^ The parent header, if present.
          -- The parent header is used to establish relationships between request and reply
          -- messages and outputs published in response to requests.
-         , messageMetadata :: Map Text Text
+         , messageMetadata :: Object
          -- ^ A free-form dict of metadata.
          , messageId :: UUID                     -- ^ A unique message UUID.
          , messageSession :: UUID                -- ^ A unique session UUID.
@@ -65,7 +65,7 @@ data MessageHeader =
          -- and determines how to parse the content and what to do with the message
          -- once it is parsed.
          }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Show)
 
 -- | A username represented as 'Text', part of the 'MessageHeader'.
 newtype Username = Username Text

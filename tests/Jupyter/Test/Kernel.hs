@@ -134,7 +134,7 @@ testKernel = testCaseSteps "Simple Kernel" $ \step -> do
         MessageHeader
           { messageIdentifiers = ["ABC", "DEF"]
           , messageParent = Nothing
-          , messageMetadata = Map.fromList []
+          , messageMetadata = mempty
           , messageId = uuid
           , messageSession = sess
           , messageUsername = "test-user"

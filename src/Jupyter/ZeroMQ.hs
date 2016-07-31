@@ -43,7 +43,7 @@ import           Data.Digest.Pure.SHA as SHA
 
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
                                       Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
-                                      Sender, lastEndpoint, bind, connect, ZMQError)
+                                      Sender, lastEndpoint, bind, connect, subscribe, ZMQError, setIdentity, restrict)
 
 import           Jupyter.Messages.Metadata (MessageHeader(..), IsMessage(..), Username(..))
 import qualified Jupyter.UUID as UUID
@@ -77,8 +77,8 @@ parseHeader identifiers headerData parentHeaderData metadata = do
 
   let messageIdentifiers = identifiers
   messageParent <- if parentHeaderData == "{}"
-                    then return Nothing
-                    else Just <$> parseHeader identifiers parentHeaderData "{}" metadata
+                     then return Nothing
+                     else Just <$> parseHeader identifiers parentHeaderData "{}" metadata
   messageType <- parseEither (.: "msg_type") header
   messageUsername <- parseEither (.: "username") header
   messageId <- parseEither (.: "msg_id") header
@@ -292,11 +292,24 @@ withClientSockets mProfile callback = runZMQ $ do
   clientStdinSocket     <- socket Dealer
   clientIopubSocket     <- socket Sub
 
+  -- Set the identity of all dealer sockets to the same thing. This is really important only for the
+  -- stdin socket – it must have the same identity as the shell socket (see the Note in the stdin
+  -- section of the messaging protocol.) If we don't set the identity ourselves, then ZeroMQ will set
+  -- its own null-byte-prefixed identity, and the identities will be different, so the client won't be
+  -- able to receive the stdin messages from the kernel.
+  setIdentity (restrict "TEST") clientShellSocket
+  setIdentity (restrict "TEST") clientStdinSocket
+  setIdentity (restrict "TEST") clientControlSocket
+
   heartbeatPort <- connectSocket mProfile 10730 profileHeartbeatPort clientHeartbeatSocket
   controlPort   <- connectSocket mProfile 11840 profileControlPort   clientControlSocket
   shellPort     <- connectSocket mProfile 12950 profileShellPort     clientShellSocket
   stdinPort     <- connectSocket mProfile 13160 profileStdinPort     clientStdinSocket
   iopubPort     <- connectSocket mProfile 14270 profileIopubPort     clientIopubSocket
+
+  -- Subscribe to all topics on the iopub socket!
+  -- If we don't do this, then no messages get received on it. 
+  subscribe clientIopubSocket ""
 
   let profile = KernelProfile
         { profileTransport = maybe TCP profileTransport mProfile
@@ -390,7 +403,7 @@ mkRequestHeader session username content = do
     MessageHeader
       { messageIdentifiers = []
       , messageParent = Nothing
-      , messageMetadata = Map.fromList []
+      , messageMetadata = mempty
       , messageId = uuid
       , messageSession = session
       , messageUsername = username
@@ -404,7 +417,7 @@ mkReplyHeader parentHeader content = do
     MessageHeader
       { messageIdentifiers = messageIdentifiers parentHeader
       , messageParent = Just parentHeader
-      , messageMetadata = Map.fromList []
+      , messageMetadata = mempty
       , messageId = uuid
       , messageSession = messageSession parentHeader
       , messageUsername = messageUsername parentHeader

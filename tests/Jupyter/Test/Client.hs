@@ -1,15 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Jupyter.Test.Client (clientTests) where
 
-import           Control.Concurrent (newEmptyMVar, MVar, forkIO, putMVar, takeMVar, readMVar,
-                                     modifyMVar_)
+import           Control.Concurrent (newMVar, swapMVar, newEmptyMVar, MVar, forkIO, putMVar, takeMVar, tryTakeMVar, readMVar,
+                                     modifyMVar_, threadDelay, tryReadMVar)
 import           Control.Concurrent.Async (link, async)
 import           System.Environment (setEnv)
 import           Control.Monad.IO.Class (liftIO)
-import           Control.Monad (forM_)
+import           Control.Monad (forM_, unless, void)
 import           Control.Monad.Catch (finally)
 import           Control.Exception (SomeException)
 import qualified Data.Map as Map
+import Data.Monoid ((<>))
 
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertFailure, assertBool)
@@ -36,7 +38,8 @@ clientTests = testGroup "Client Tests" [testClient]
 
 data MessageExchange =
        MessageExchange
-         { exchangeRequest :: ClientRequest
+         { exchangeName :: String
+         , exchangeRequest :: ClientRequest
          , exchangeReply :: KernelReply
          , exchangeKernelRequests :: [(KernelRequest, ClientReply)]
          , exchangeComms :: [Comm]
@@ -47,8 +50,7 @@ data MessageExchange =
 -- Test that messages can be sent and received on the heartbeat socket.
 testClient :: TestTree
 testClient = testCaseSteps "Simple Client" $ \step -> do
-  currentExchangeVar <- newEmptyMVar
-  kernelOutputsVar <- newEmptyMVar
+  kernelOutputsVar <- newMVar []
   commsVar <- newEmptyMVar
   kernelRequestsVar <- newEmptyMVar
   clientRepliesVar <- newEmptyMVar
@@ -64,46 +66,151 @@ testClient = testCaseSteps "Simple Client" $ \step -> do
 
       spawnProcess "python" ["-m", "ipykernel", "-f", "profile.json"]
 
-    liftIO $ step "Checking messages..."
+    -- Wait for the kernel to initialize. We know that the kernel is done initializing when it sends its
+    -- first response; however, sometimes we also get a "starting" status. Since later on we check for
+    -- equality of kernel outputs, we want to get rid of this timing inconsistencey immediately by just 
+    -- doing on preparation message.
+    liftIO $ step "Waiting for kernel to start..."
+    sendClientRequest ConnectRequest
+    liftIO $ waitForKernelOutput kernelOutputsVar $ elem $ KernelStatusOutput KernelIdle
+    liftIO $ takeMVar kernelOutputsVar
+
+    liftIO $ step "Checking messages exchanges..."
     flip finally (liftIO $ terminateProcess proc) $
-      forM_ (exchanges profile) $ \messageExchange -> do
+      forM_ (mkMessageExchanges profile) $ \exchange@MessageExchange{..} -> do
         liftIO $ do
-          putMVar currentExchangeVar messageExchange
+          step $ "\t..." ++ exchangeName
           putMVar kernelOutputsVar []
           putMVar commsVar []
           putMVar kernelRequestsVar []
 
-        reply <- sendClientRequest $ exchangeRequest messageExchange
+          void $ tryTakeMVar clientRepliesVar
+          putMVar clientRepliesVar exchangeKernelRequests
+
+        reply <- sendClientRequest exchangeRequest
 
         liftIO $ do
-          exchangeReply messageExchange @=? reply
+          waitForKernelOutput kernelOutputsVar (elem $ KernelStatusOutput KernelIdle)
+          exchangeReply @=? reply
 
           receivedOutputs <- takeMVar kernelOutputsVar
-          exchangeKernelOutputs messageExchange @=? reverse receivedOutputs
+          exchangeKernelOutputs @=? reverse receivedOutputs
 
           receivedComms <- takeMVar commsVar
-          exchangeComms messageExchange @=? reverse receivedComms
+          exchangeComms @=? reverse receivedComms
 
           receivedKernelRequests <- takeMVar kernelRequestsVar
-          map fst (exchangeKernelRequests messageExchange) @=? reverse receivedKernelRequests
+          map fst exchangeKernelRequests  @=? reverse receivedKernelRequests
 
+waitForKernelOutput :: MVar [KernelOutput] -> ([KernelOutput] -> Bool) -> IO ()
+waitForKernelOutput var cond = do
+  outputs <- readMVar var
+  unless (cond outputs) $ do
+    threadDelay 100000
+    waitForKernelOutput var cond
     
+mkMessageExchanges :: KernelProfile -> [MessageExchange]
+mkMessageExchanges profile =
+  [ MessageExchange
+    { exchangeName = "connect_request"
+    , exchangeRequest = ConnectRequest
+    , exchangeReply = ConnectReply
+                        ConnectInfo
+                          { connectShellPort = profileShellPort profile
+                          , connectIopubPort = profileIopubPort profile
+                          , connectStdinPort = profileStdinPort profile
+                          , connectHeartbeatPort = profileHeartbeatPort profile
+                          }
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "execute_request (stream output)"
+    , exchangeRequest = ExecuteRequest "import sys\nprint(sys.version.split()[0])"
+                          defaultExecuteOptions
+    , exchangeReply = ExecuteReply 1 ExecuteOk
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [ kernelBusy
+                              , ExecuteInputOutput "import sys\nprint(sys.version.split()[0])" 1
+                              , StreamOutput StreamStdout "3.5.0\n"
+                              , kernelIdle
+                              ]
+    }
+  , MessageExchange
+    { exchangeName = "execute_request (expr)"
+    , exchangeRequest = ExecuteRequest "3 + 3" defaultExecuteOptions
+    , exchangeReply = ExecuteReply 2 ExecuteOk
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [ kernelBusy
+                              , ExecuteInputOutput "3 + 3" 2
+                              , ExecuteResultOutput 2 $ displayPlain "6"
+                              , kernelIdle
+                              ]
+    }
+  , MessageExchange
+    { exchangeName = "execute_request (none)"
+    , exchangeRequest = ExecuteRequest "" defaultExecuteOptions
+    , exchangeReply = ExecuteReply 2 ExecuteOk
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, ExecuteInputOutput "" 3, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "execute_request (display)"
+    , exchangeRequest = ExecuteRequest "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))"
+                          defaultExecuteOptions
+    , exchangeReply = ExecuteReply 3 ExecuteOk
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [ kernelBusy
+                              , ExecuteInputOutput
+                                  "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))"
+                                  3
+                              , DisplayDataOutput $ displayPlain
+                                                      "<IPython.core.display.HTML object>" <> displayHtml
+                                                                                                "<b>Hi</b>"
+                              , kernelIdle
+                              ]
+    }
+  , MessageExchange
+    { exchangeName = "execute_request (input)"
+    , exchangeRequest = ExecuteRequest "print(input('Hello'))"
+                          defaultExecuteOptions { executeAllowStdin = True }
+    , exchangeReply = ExecuteReply 4 ExecuteOk
+    , exchangeKernelRequests = [ (InputRequest
+                                    InputOptions { inputPassword = False, inputPrompt = "Hello" }, InputReply
+                                                                                                     "stdin")
+                               ]
+    , exchangeComms = []
+    , exchangeKernelOutputs = [ kernelBusy
+                              , ExecuteInputOutput "print(input('Hello'))" 4
+                              , StreamOutput StreamStdout "stdin\n"
+                              , kernelIdle
+                              ]
+    }
+  , MessageExchange
+    { exchangeName = "execute_request (password)"
+    , exchangeRequest = ExecuteRequest "import getpass\nprint(getpass.getpass('Hello'))"
+                          defaultExecuteOptions { executeAllowStdin = True }
+    , exchangeReply = ExecuteReply 5 ExecuteOk
+    , exchangeKernelRequests = [ (InputRequest
+                                    InputOptions { inputPassword = True, inputPrompt = "Hello" }, InputReply
+                                                                                                    "stdin")
+                               ]
+    , exchangeComms = []
+    , exchangeKernelOutputs = [ kernelBusy
+                              , ExecuteInputOutput "import getpass\nprint(getpass.getpass('Hello'))" 5
+                              , StreamOutput StreamStdout "stdin\n"
+                              , kernelIdle
+                              ]
+    }
+  ]
   where
-    exchanges profile =
-      [ MessageExchange
-        { exchangeRequest = ConnectRequest
-        , exchangeReply = ConnectReply
-                            ConnectInfo
-                              { connectShellPort = profileShellPort profile
-                              , connectIopubPort = profileIopubPort profile
-                              , connectStdinPort = profileStdinPort profile
-                              , connectHeartbeatPort = profileHeartbeatPort profile
-                              }
-        , exchangeKernelRequests = []
-        , exchangeComms = []
-        , exchangeKernelOutputs = []
-        }
-      ]
+    kernelIdle = KernelStatusOutput KernelIdle
+    kernelBusy = KernelStatusOutput KernelBusy
 
 
 kernelRequestHandler' :: MVar [(KernelRequest, ClientReply)] -> MVar [KernelRequest] -> (Comm -> IO ()) -> KernelRequest -> IO ClientReply
@@ -119,7 +226,8 @@ commHandler' :: MVar [Comm] -> (Comm -> IO ()) -> Comm -> IO ()
 commHandler' var _ comm = modifyMVar_ var $ return . (comm :)
 
 kernelOutputHandler' :: MVar [KernelOutput] -> (Comm -> IO ()) -> KernelOutput -> IO ()
-kernelOutputHandler' var _ out = modifyMVar_ var $ return . (out :)
+kernelOutputHandler' var _ out =
+  modifyMVar_ var $ return . (out :)
 
 -- test what happens if exception is thrown in handler
 -- test what happens if port is taken for client

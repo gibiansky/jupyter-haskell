@@ -50,6 +50,7 @@ module Jupyter.Messages (
     CodeBlock(..),
     CodeOffset(..),
     ExecuteOptions(..),
+    defaultExecuteOptions,
     DetailLevel(..),
     HistoryOptions(..),
     TargetName(..),
@@ -87,7 +88,7 @@ module Jupyter.Messages (
     KernelOutput(..),
     Stream(..),
     DisplayData(..),
-    displayPlain, displayLatex,
+    displayPlain, displayLatex, displayHtml,
     ImageDimensions(..),
     MimeType(..),
     ErrorInfo(..),
@@ -117,6 +118,7 @@ import           Control.Applicative ((<|>))
 
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
+import           GHC.Exts (IsString)
 
 import           Jupyter.Messages.Metadata (IsMessage(..))
 import qualified Jupyter.UUID as UUID
@@ -362,6 +364,14 @@ data ExecuteOptions =
          }
   deriving (Eq, Ord, Show)
 
+defaultExecuteOptions :: ExecuteOptions
+defaultExecuteOptions = ExecuteOptions
+  { executeSilent = False
+  , executeStoreHistory = True
+  , executeAllowStdin = False
+  , executeStopOnError = True
+  }
+
 
 -- | Whether the kernel should restart after shutting down, or remain stopped.
 data Restart =
@@ -392,7 +402,7 @@ newtype TargetName = TargetName Text
 
 -- | A block of code, represented as text.
 newtype CodeBlock = CodeBlock Text
-  deriving (Eq, Ord, Show, FromJSON, ToJSON)
+  deriving (Eq, Ord, Show, FromJSON, ToJSON, IsString)
 
 -- | A zero-indexed offset into a block of code.
 newtype CodeOffset = CodeOffset Int
@@ -580,6 +590,8 @@ instance IsMessage KernelReply where
                                                    <*> o .: "metadata")
       "is_complete_reply" -> Just $ \o -> IsCompleteReply <$> parseJSON (Object o)
       "connect_reply" -> Just $ \o ->
+        -- The messaging spec indicates that this message uses *_port, but
+        -- the IPython kernel sends just *... allow both?
         ConnectReply <$> (ConnectInfo <$> (o .: "shell_port" <|> o .: "shell")
                                       <*> (o .: "iopub_port" <|> o .: "iopub")
                                       <*> (o .: "stdin_port" <|> o .: "stdin")
@@ -1228,9 +1240,13 @@ newtype DisplayData = DisplayData (Map MimeType Text)
 displayPlain :: Text -> DisplayData
 displayPlain = DisplayData . Map.singleton MimePlainText
 --
--- | Create a text/plain 'DisplayData' bundle out of a bit of 'Text'.
+-- | Create a text/latex 'DisplayData' bundle out of a bit of 'Text'.
 displayLatex :: Text -> DisplayData
 displayLatex = DisplayData . Map.singleton MimeLatex
+--
+-- | Create a text/html 'DisplayData' bundle out of a bit of 'Text'.
+displayHtml :: Text -> DisplayData
+displayHtml = DisplayData . Map.singleton MimeHtml
 
 -- | Convert a 'DisplayData' to a list of JSON fields.
 --
