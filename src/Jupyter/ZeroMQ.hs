@@ -373,6 +373,7 @@ receiveMessage sock = do
   parentHeader <- receive sock
   metadata <- receive sock
   content <- receive sock
+  liftIO $ CBS.putStrLn content
   return $ parseMessage idents headerData parentHeader metadata content 
 
 -- | Read data from the socket until we hit an ending string. Return all data as a list, which does

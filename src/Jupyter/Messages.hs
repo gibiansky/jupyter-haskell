@@ -579,8 +579,8 @@ instance IsMessage KernelReply where
         ExecuteReply <$> o .: "execution_count" <*> (ExecuteResult <$> parseResult o (pure ()))
       "inspect_reply" -> Just $ \o ->
         InspectReply . InspectResult <$> parseResult o
-                                           (ifM (o .: "found") (pure Nothing)
-                                              (Just <$> parseDisplayData o))
+                                           (ifM (o .: "found") (Just <$> parseDisplayData o)
+                                              (pure Nothing))
       "history_reply" -> Just $ \o -> HistoryReply <$> o .: "history"
       "complete_reply" -> Just $ \o ->
         CompleteReply . CompleteResult <$> parseResult o
@@ -590,8 +590,8 @@ instance IsMessage KernelReply where
                                                    <*> o .: "metadata")
       "is_complete_reply" -> Just $ \o -> IsCompleteReply <$> parseJSON (Object o)
       "connect_reply" -> Just $ \o ->
-        -- The messaging spec indicates that this message uses *_port, but
-        -- the IPython kernel sends just *... allow both?
+        -- The messaging spec indicates that this message uses *_port, but the IPython kernel sends just
+        -- *... allow both?
         ConnectReply <$> (ConnectInfo <$> (o .: "shell_port" <|> o .: "shell")
                                       <*> (o .: "iopub_port" <|> o .: "iopub")
                                       <*> (o .: "stdin_port" <|> o .: "stdin")
@@ -686,7 +686,7 @@ data ConnectInfo =
 
 -- | A completion match, including all the text (not just the text after the cursor).
 newtype CompletionMatch = CompletionMatch Text
-  deriving (Eq, Ord, Show, ToJSON, FromJSON)
+  deriving (Eq, Ord, Show, ToJSON, FromJSON, IsString)
 
 -- | Range (of an input cell) to replace with a completion match.
 data CursorRange =
@@ -717,14 +717,18 @@ instance ToJSON HistoryItem where
 instance FromJSON HistoryItem where
   parseJSON (Array vec) =
     case toList vec of
-      [session, line, input] ->
-        HistoryItem <$> parseJSON session <*> parseJSON line <*> parseJSON input <*> pure Nothing
-      [session, line, input, output] ->
-        HistoryItem <$> parseJSON session
-                    <*> parseJSON line
-                    <*> parseJSON input
-                    <*> (Just <$> parseJSON output)
-      _ -> fail "Expecting list of 3 or 4 items for 'history' field items"
+      [session, line, inout] -> do
+        (input, output) <- case inout of
+                             String str -> pure (str, Nothing)
+                             Array tuple ->
+                               case toList tuple of
+                                 [String input, String txt] -> pure (input, Just txt)
+                                 [String input, Null]       -> pure (input, Nothing)
+                                 _                          -> fail
+                                                                 "Expected 2-tuple of (input, output) in history item"
+                             _ -> fail "Expecting text (input) or 2-tuple for history item"
+        HistoryItem <$> parseJSON session <*> parseJSON line <*> pure input <*> pure output
+      _ -> fail "Expecting 3-tuple of values for history item"
   parseJSON _ = fail "Expecting list for 'history' field items"
 
 -- | Whether a string of code is complete (no more code needs to be entered), incomplete, or unknown
