@@ -62,6 +62,7 @@ module Jupyter.Messages (
     -- * Kernel Replies (Shell channel)
     KernelReply(..),
     KernelInfo(..),
+    CodeMirrorMode(..),
     LanguageInfo(..),
     HelpLink(..),
     ExecuteResult(..),
@@ -551,7 +552,7 @@ data KernelReply =
                  -- kernel that is still alive, to avoid leaving stray processes in the user’s
                  -- machine.
                   ShutdownReply Restart
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Show)
 
 instance IsMessage KernelReply where
   getMessageType reply =
@@ -875,7 +876,7 @@ data KernelInfo =
          , kernelHelpLinks :: [HelpLink] -- ^ A list of help links. These will be displayed in the
                                          -- help menu in the notebook UI.
          }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Show)
 
 -- | Information about the language of code for a kernel.
 data LanguageInfo =
@@ -889,14 +890,17 @@ data LanguageInfo =
                                           -- '.py'
          , languagePygmentsLexer :: Maybe Text -- ^ Pygments lexer, for highlighting (Only needed if
                                                -- it differs from the 'name' field.)
-         , languageCodeMirrorMode :: Maybe Text -- ^ Codemirror mode, for for highlighting in the
+         , languageCodeMirrorMode :: Maybe CodeMirrorMode -- ^ Codemirror mode, for for highlighting in the
                                                 -- notebook. (Only needed if it differs from the
                                                 -- 'name' field.)
          , languageNbconvertExporter :: Maybe Text -- ^ Nbconvert exporter, if notebooks written with
                                                    -- this kernel should be exported with something
                                                    -- other than the general 'script' exporter.
          }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Show)
+
+data CodeMirrorMode = NamedMode Text | OptionsMode Text [(Text, Value)]
+  deriving (Eq, Show)
 
 instance ToJSON LanguageInfo where
   toJSON LanguageInfo { .. } = object $
@@ -921,6 +925,19 @@ instance FromJSON LanguageInfo where
                  <*> o .:? "codemirror_mode"
                  <*> o .:? "nbconvert_exporter"
   parseJSON _ = fail "Expecting object for 'language_info' field"
+
+instance ToJSON CodeMirrorMode where
+  toJSON mode =
+    case mode of
+      NamedMode name -> String name
+      OptionsMode name opts ->
+        object $ ("name" .= name) : map (uncurry (.=)) opts
+
+instance FromJSON CodeMirrorMode where
+  parseJSON (String str) = return $ NamedMode str
+  parseJSON (Object o) = OptionsMode <$> o .: "name"
+                                     <*> (Map.assocs . Map.delete "name" <$> parseJSON (Object o))
+  parseJSON _ = fail "Expected string or object for codemirror_mode key"
 
 -- | A link to some help text to include in the frontend's help menu.
 data HelpLink =
@@ -1052,18 +1069,20 @@ data KernelOutput =
                   -- The 'WaitBeforeClear' parameter changes when the output will be cleared
                   -- (immediately or delayed until next output).
                    ClearOutput WaitBeforeClear
+                  | ShutdownNotificationOutput Restart
   deriving (Eq, Ord, Show)
 
 instance IsMessage KernelOutput where
   getMessageType msg =
     case msg of
-      StreamOutput{}        -> "stream"
-      DisplayDataOutput{}   -> "display_data"
-      ExecuteInputOutput{}  -> "execute_input"
-      ExecuteResultOutput{} -> "execute_result"
-      ExecuteErrorOutput{}  -> "error"
-      KernelStatusOutput{}  -> "status"
-      ClearOutput{}         -> "clear_output"
+      StreamOutput{}               -> "stream"
+      DisplayDataOutput{}          -> "display_data"
+      ExecuteInputOutput{}         -> "execute_input"
+      ExecuteResultOutput{}        -> "execute_result"
+      ExecuteErrorOutput{}         -> "error"
+      KernelStatusOutput{}         -> "status"
+      ClearOutput{}                -> "clear_output"
+      ShutdownNotificationOutput{} -> "shutdown_reply"
   parseMessageContent msgType =
     case msgType of
       "stream" -> Just $ \o -> StreamOutput <$> o .: "name" <*> o .: "text"
@@ -1074,6 +1093,7 @@ instance IsMessage KernelOutput where
       "error" -> Just $ \o -> ExecuteErrorOutput <$> parseJSON (Object o)
       "status" -> Just $ \o -> KernelStatusOutput <$> o .: "execution_state"
       "clear_output" -> Just $ \o -> ClearOutput <$> o .: "wait"
+      "shutdown_reply" -> Just $ \o -> ShutdownNotificationOutput <$> o .: "restart"
       _ -> Nothing
 
 instance ToJSON KernelOutput where

@@ -297,9 +297,10 @@ withClientSockets mProfile callback = runZMQ $ do
   -- section of the messaging protocol.) If we don't set the identity ourselves, then ZeroMQ will set
   -- its own null-byte-prefixed identity, and the identities will be different, so the client won't be
   -- able to receive the stdin messages from the kernel.
-  setIdentity (restrict "TEST") clientShellSocket
-  setIdentity (restrict "TEST") clientStdinSocket
-  setIdentity (restrict "TEST") clientControlSocket
+  identity <- CBS.pack . UUID.uuidToString <$> liftIO UUID.random
+  setIdentity (restrict identity) clientShellSocket
+  setIdentity (restrict identity) clientStdinSocket
+  setIdentity (restrict identity) clientControlSocket
 
   heartbeatPort <- connectSocket mProfile 10730 profileHeartbeatPort clientHeartbeatSocket
   controlPort   <- connectSocket mProfile 11840 profileControlPort   clientControlSocket
@@ -373,7 +374,6 @@ receiveMessage sock = do
   parentHeader <- receive sock
   metadata <- receive sock
   content <- receive sock
-  liftIO $ CBS.putStrLn content
   return $ parseMessage idents headerData parentHeader metadata content 
 
 -- | Read data from the socket until we hit an ending string. Return all data as a list, which does

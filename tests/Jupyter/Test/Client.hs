@@ -20,7 +20,7 @@ import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertFailure
 import           Data.ByteString (ByteString)
 import qualified Data.Text as T
 import qualified Data.ByteString.Lazy as LBS
-import           Data.Aeson (encode)
+import           Data.Aeson (encode, ToJSON(..))
 import           System.Process (spawnProcess, terminateProcess)
 
 import           System.ZMQ4.Monadic (socket, Req(..), Dealer(..), send, receive, bind, connect, ZMQ,
@@ -77,10 +77,14 @@ testClient = testCaseSteps "Simple Client" $ \step -> do
     -- equality of kernel outputs, we want to get rid of this timing inconsistencey immediately by just 
     -- doing on preparation message.
     liftIO $ step "Waiting for kernel to start..."
+    liftIO $ print "about to send connect request"
     sendClientRequest ConnectRequest
+    liftIO $ print "waiting on connect request"
     liftIO $ do
       waitForKernelIdle kernelOutputsVar
+      print "waiting on kernel idle"
       swapMVar kernelOutputsVar []
+    liftIO $ print "waiting on kernel idle 2"
 
     -- Acquire the current session number. Without this, we can't accurately test the history replies,
     -- since they contain the session numbers. To acquire the session number, send an execute request followed
@@ -132,6 +136,8 @@ waitForKernelIdle var = do
   outputs <- readMVar var
   unless (KernelStatusOutput KernelIdle `elem` outputs) $ do
     threadDelay 100000
+    print outputs
+    print "waiting for kernel idle..."
     waitForKernelIdle var
     
 mkMessageExchanges :: Int -> ExecutionCount -> KernelProfile -> [MessageExchange]
@@ -158,7 +164,8 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput "import sys\nprint(sys.version.split()[0])" (execCount + 1)
+                              , ExecuteInputOutput "import sys\nprint(sys.version.split()[0])"
+                                  (execCount + 1)
                               , StreamOutput StreamStdout "3.5.0\n"
                               , kernelIdle
                               ]
@@ -342,6 +349,128 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "history_request (range)"
+    , exchangeRequest = HistoryRequest $ HistoryOptions False True $ HistoryRange $ HistoryRangeOptions
+                                                                                      sessionNum
+                                                                                      4
+                                                                                      6
+    , exchangeReply = HistoryReply $
+      [ HistoryItem 0 4 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
+      , HistoryItem 0 5 "x = input('Hello')\nprint(x)\nx" Nothing
+      ]
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "history_request (range output)"
+    , exchangeRequest = HistoryRequest $ HistoryOptions True True $ HistoryRange $ HistoryRangeOptions
+                                                                                     sessionNum
+                                                                                     4
+                                                                                     6
+    , exchangeReply = HistoryReply $
+      [ HistoryItem 0 4 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
+      , HistoryItem 0 5 "x = input('Hello')\nprint(x)\nx" (Just "'stdin'")
+      ]
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "history_request (search)"
+    , exchangeRequest = HistoryRequest $ HistoryOptions True True $ HistorySearch $ HistorySearchOptions
+                                                                                      1
+                                                                                      "x = input('Hello')\nprint(?)\nx"
+                                                                                      False
+    , exchangeReply = HistoryReply $
+      [HistoryItem sessionNum 5 "x = input('Hello')\nprint(x)\nx" Nothing]
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "history_request (search output)"
+    , exchangeRequest = HistoryRequest $ HistoryOptions True True $ HistorySearch $ HistorySearchOptions
+                                                                                      1
+                                                                                      "x = input('Hello')\nprint(?)\nx"
+                                                                                      False
+    , exchangeReply = HistoryReply $
+      [HistoryItem sessionNum 5 "x = input('Hello')\nprint(x)\nx" Nothing]
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "kernel_info_request"
+    , exchangeRequest = KernelInfoRequest
+    , exchangeReply = KernelInfoReply $
+      KernelInfo
+        { kernelProtocolVersion = "5.0"
+        , kernelBanner = T.unlines
+                           [ "Python 3.5.0 (default, Oct  3 2015, 11:20:34) "
+                           , "Type \"copyright\", \"credits\" or \"license\" for more information."
+                           , ""
+                           , "IPython 5.0.0 -- An enhanced Interactive Python."
+                           , "?         -> Introduction and overview of IPython's features."
+                           , "%quickref -> Quick reference."
+                           , "help      -> Python's own help system."
+                           , "object?   -> Details about 'object', use 'object??' for extra details."
+                           ]
+        , kernelImplementation = "ipython"
+        , kernelImplementationVersion = "5.0.0"
+        , kernelLanguageInfo = LanguageInfo
+          { languageName = "python"
+          , languageVersion = "3.5.0"
+          , languageMimetype = "text/x-python"
+          , languageFileExtension = ".py"
+          , languagePygmentsLexer = Just "ipython3"
+          , languageCodeMirrorMode = Just $
+            OptionsMode "ipython" [("version", toJSON (3 :: Int))]
+          , languageNbconvertExporter = Just "python"
+          }
+        , kernelHelpLinks = [ HelpLink
+                              { helpLinkText = "Python"
+                              , helpLinkURL = "http://docs.python.org/3.5"
+                              }
+                            , HelpLink
+                              { helpLinkText = "IPython"
+                              , helpLinkURL = "http://ipython.org/documentation.html"
+                              }
+                            , HelpLink
+                              { helpLinkText = "NumPy"
+                              , helpLinkURL = "http://docs.scipy.org/doc/numpy/reference/"
+                              }
+                            , HelpLink
+                              { helpLinkText = "SciPy"
+                              , helpLinkURL = "http://docs.scipy.org/doc/scipy/reference/"
+                              }
+                            , HelpLink
+                              { helpLinkText = "Matplotlib"
+                              , helpLinkURL = "http://matplotlib.org/contents.html"
+                              }
+                            , HelpLink
+                              { helpLinkText = "SymPy"
+                              , helpLinkURL = "http://docs.sympy.org/latest/index.html"
+                              }
+                            , HelpLink
+                              { helpLinkText = "pandas"
+                              , helpLinkURL = "http://pandas.pydata.org/pandas-docs/stable/"
+                              }
+                            ]
+        }
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "shutdown (restart)"
+    , exchangeRequest = ShutdownRequest Restart
+    , exchangeReply = ShutdownReply Restart
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, ShutdownNotificationOutput Restart, kernelIdle]
     }
   ]
   where
