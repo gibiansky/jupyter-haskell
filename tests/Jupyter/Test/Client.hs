@@ -60,34 +60,32 @@ testClient = testCaseSteps "Simple Client" $ \step -> do
   kernelRequestsVar <- newEmptyMVar
   clientRepliesVar <- newEmptyMVar
   let clientHandlers = ClientHandlers (kernelRequestHandler' clientRepliesVar kernelRequestsVar) (commHandler' commsVar) (kernelOutputHandler' kernelOutputsVar)
-  liftIO $ print "setup the vars"
 
-  inTempDir $ \tmpDir -> (>>) (liftIO $ print "in tmp dir") $ runClient Nothing Nothing clientHandlers $ \profile -> do
-    liftIO $ print "running a client"
+  inTempDir $ \tmpDir -> runClient Nothing Nothing clientHandlers $ \profile -> do
     proc <- liftIO $ do
-      print "proc a proc"
       step "Starting kernel..."
       writeProfile profile "profile.json"
 
       -- set JPY_PARENT_PID to shut up the kernel about its Ctrl-C behaviour
       setEnv "JPY_PARENT_PID" "-1"
 
-      spawnProcess "python" ["-m", "ipykernel", "-f", "profile.json"]
-    liftIO $ print "proc a proc 2"
+      -- Start the kernel, and then give it a bit of time to start. If we don't give it some time to
+      -- start, then it is possible for it to miss our first message. In that case, this test suite just
+      -- spins forever...
+      proc <- spawnProcess "python" ["-m", "ipykernel", "-f", "profile.json"]
+      threadDelay $ 500 * 1000
+
+      return proc
 
     -- Wait for the kernel to initialize. We know that the kernel is done initializing when it sends its
     -- first response; however, sometimes we also get a "starting" status. Since later on we check for
     -- equality of kernel outputs, we want to get rid of this timing inconsistencey immediately by just 
     -- doing on preparation message.
     liftIO $ step "Waiting for kernel to start..."
-    liftIO $ print "about to send connect request"
     sendClientRequest ConnectRequest
-    liftIO $ print "waiting on connect request"
     liftIO $ do
       waitForKernelIdle kernelOutputsVar
-      print "waiting on kernel idle"
       swapMVar kernelOutputsVar []
-    liftIO $ print "waiting on kernel idle 2"
 
     -- Acquire the current session number. Without this, we can't accurately test the history replies,
     -- since they contain the session numbers. To acquire the session number, send an execute request followed
@@ -139,8 +137,6 @@ waitForKernelIdle var = do
   outputs <- readMVar var
   unless (KernelStatusOutput KernelIdle `elem` outputs) $ do
     threadDelay 100000
-    print outputs
-    print "waiting for kernel idle..."
     waitForKernelIdle var
     
 mkMessageExchanges :: Int -> ExecutionCount -> KernelProfile -> [MessageExchange]
@@ -615,6 +611,3 @@ commHandler' var _ comm = modifyMVar_ var $ return . (comm' :)
 kernelOutputHandler' :: MVar [KernelOutput] -> (Comm -> IO ()) -> KernelOutput -> IO ()
 kernelOutputHandler' var _ out =
   modifyMVar_ var $ return . (out :)
-
--- test what happens if exception is thrown in handler
--- test what happens if port is taken for client
