@@ -399,7 +399,7 @@ instance FromJSON Restart where
 -- should behave. (The 'TargetModule' can also be optionally used in combination with a 'TargetName'
 -- for this purpose; see 'CommOpen' for more info.)
 newtype TargetName = TargetName Text 
-  deriving (Eq, Ord, Show, FromJSON, ToJSON)
+  deriving (Eq, Ord, Show, FromJSON, ToJSON, IsString)
 
 -- | A block of code, represented as text.
 newtype CodeBlock = CodeBlock Text

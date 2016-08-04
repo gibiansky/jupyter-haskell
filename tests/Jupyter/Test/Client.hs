@@ -11,6 +11,7 @@ import           Control.Monad (forM_, unless, void)
 import           Control.Monad.Catch (finally)
 import           Control.Exception (SomeException)
 import qualified Data.Map as Map
+import qualified Data.HashMap.Strict as HashMap
 import           Data.Monoid ((<>))
 import           Data.Maybe (listToMaybe)
 
@@ -20,8 +21,10 @@ import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertFailure
 import           Data.ByteString (ByteString)
 import qualified Data.Text as T
 import qualified Data.ByteString.Lazy as LBS
-import           Data.Aeson (encode, ToJSON(..))
+import           Data.Aeson (encode, ToJSON(..), object, (.=))
+import           Data.Aeson.Types (Value(..))
 import           System.Process (spawnProcess, terminateProcess)
+
 
 import           System.ZMQ4.Monadic (socket, Req(..), Dealer(..), send, receive, bind, connect, ZMQ,
                                       Socket, SocketType, runZMQ)
@@ -122,14 +125,14 @@ testClient = testCaseSteps "Simple Client" $ \step -> do
           waitForKernelIdle kernelOutputsVar
           exchangeReply @=? reply
 
-          receivedOutputs <- takeMVar kernelOutputsVar
-          exchangeKernelOutputs @=? reverse receivedOutputs
-
           receivedComms <- takeMVar commsVar
           exchangeComms @=? reverse receivedComms
 
           receivedKernelRequests <- takeMVar kernelRequestsVar
           map fst exchangeKernelRequests  @=? reverse receivedKernelRequests
+
+          receivedOutputs <- takeMVar kernelOutputsVar
+          exchangeKernelOutputs @=? reverse receivedOutputs
 
 waitForKernelIdle :: MVar [KernelOutput] -> IO ()
 waitForKernelIdle var = do
@@ -191,16 +194,120 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeKernelOutputs = [kernelBusy, ExecuteInputOutput "" (execCount + 3), kernelIdle]
     }
   , MessageExchange
-    { exchangeName = "execute_request (display)"
-    , exchangeRequest = ExecuteRequest "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))"
+    { exchangeName = "execute_request (clear)"
+    , exchangeRequest = ExecuteRequest "from IPython.display import clear_output\nclear_output()"
                           defaultExecuteOptions
     , exchangeReply = ExecuteReply (execCount + 3) ExecuteOk
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
                               , ExecuteInputOutput
-                                  "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))"
+                                  "from IPython.display import clear_output\nclear_output()"
                                   (execCount + 3)
+                              , ClearOutput ClearImmediately
+                              , kernelIdle
+                              ]
+    }
+  , MessageExchange
+    { exchangeName = "execute_request (comms)"
+    , exchangeRequest = ExecuteRequest "import ipywidgets as widgets\nwidgets.FloatSlider()"
+                          defaultExecuteOptions
+    , exchangeReply = ExecuteReply (execCount + 4) ExecuteOk
+    , exchangeKernelRequests = []
+    , exchangeComms = [ CommOpen
+                          fakeUUID
+                          (object
+                             [ "align_items" .= str ""
+                             , "_view_module" .= str "jupyter-js-widgets"
+                             , "height" .= str ""
+                             , "bottom" .= str ""
+                             , "display" .= str ""
+                             , "overflow_y" .= str ""
+                             , "min_height" .= str ""
+                             , "_view_name" .= str "LayoutView"
+                             , "justify_content" .= str ""
+                             , "left" .= str ""
+                             , "min_width" .= str ""
+                             , "overflow_x" .= str ""
+                             , "width" .= str ""
+                             , "margin" .= str ""
+                             , "visibility" .= str ""
+                             , "msg_throttle" .= toJSON (3 :: Int)
+                             , "overflow" .= str ""
+                             , "border" .= str ""
+                             , "max_height" .= str ""
+                             , "flex" .= str ""
+                             , "flex_flow" .= str ""
+                             , "max_width" .= str ""
+                             , "_model_module" .= str "jupyter-js-widgets"
+                             , "right" .= str ""
+                             , "_model_name" .= str "LayoutModel"
+                             , "top" .= str ""
+                             , "align_content" .= str ""
+                             , "align_self" .= str ""
+                             , "padding" .= str ""
+                             ])
+                          "jupyter.widget"
+                          Nothing
+                      , CommOpen
+                          fakeUUID
+                          (object
+                             [ "max" .= toJSON (100 :: Int)
+                             , "readout" .= True
+                             , "background_color" .= (Nothing :: Maybe ())
+                             , "slider_color" .= (Nothing :: Maybe ())
+                             , "_view_module" .= str "jupyter-js-widgets"
+                             , "font_family" .= str ""
+                             , "_view_name" .= str "FloatSliderView"
+                             , "color" .= (Nothing :: Maybe ())
+                             , "disabled" .= False
+                             , "value" .= toJSON (0 :: Int)
+                             , "visible" .= True
+                             , "msg_throttle" .= toJSON (3 :: Int)
+                             , "font_weight" .= str ""
+                             , "step" .= toJSON (0.1 :: Float)
+                             , "min" .= toJSON (0 :: Int)
+                             , "_model_module" .= str "jupyter-js-widgets"
+                             , "readout_format" .= str ".2f"
+                             , "_model_name" .= str "FloatSliderModel"
+                             , "_range" .= False
+                             , "continuous_update" .= True
+                             , "font_style" .= str ""
+                             , "orientation" .= str "horizontal"
+                             , "_dom_classes" .= ([] :: [()])
+                             , "description" .= str ""
+                             , "font_size" .= str ""
+                             ])
+                          "jupyter.widget"
+                          Nothing
+                      , CommMessage fakeUUID (object ["method" .= str "display"])
+                      ]
+    , exchangeKernelOutputs = [ kernelBusy
+                              , ExecuteInputOutput
+                                  "import ipywidgets as widgets\nwidgets.FloatSlider()"
+                                  (execCount + 4)
+                              , StreamOutput StreamStderr $
+                                T.unwords
+                                  [ "Widget Javascript not detected. "
+                                  , "It may not be installed properly."
+                                  , "Did you enable the widgetsnbextension?"
+                                  , "If not, then run"
+                                  , "\"jupyter nbextension enable --py --sys-prefix widgetsnbextension\"\n"
+                                  ]
+                              , kernelIdle
+                              ]
+    }
+  , MessageExchange
+    { exchangeName = "execute_request (display)"
+    , exchangeRequest = ExecuteRequest "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))"
+                          defaultExecuteOptions
+    , exchangeReply = ExecuteReply (execCount + 5) ExecuteOk
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [ kernelBusy
+                              , ExecuteInputOutput
+                                  "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))"
+                                  (execCount + 5)
                               , DisplayDataOutput $ displayPlain
                                                       "<IPython.core.display.HTML object>" <> displayHtml
                                                                                                 "<b>Hi</b>"
@@ -211,16 +318,16 @@ mkMessageExchanges sessionNum execCount profile =
     { exchangeName = "execute_request (input)"
     , exchangeRequest = ExecuteRequest "x = input('Hello')\nprint(x)\nx"
                           defaultExecuteOptions { executeAllowStdin = True }
-    , exchangeReply = ExecuteReply (execCount + 4) ExecuteOk
+    , exchangeReply = ExecuteReply (execCount + 6) ExecuteOk
     , exchangeKernelRequests = [ (InputRequest
                                     InputOptions { inputPassword = False, inputPrompt = "Hello" }, InputReply
                                                                                                      "stdin")
                                ]
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput "x = input('Hello')\nprint(x)\nx" (execCount + 4)
+                              , ExecuteInputOutput "x = input('Hello')\nprint(x)\nx" (execCount + 6)
                               , StreamOutput StreamStdout "stdin\n"
-                              , ExecuteResultOutput (execCount + 4) $ displayPlain "'stdin'"
+                              , ExecuteResultOutput (execCount + 6) $ displayPlain "'stdin'"
                               , kernelIdle
                               ]
     }
@@ -228,7 +335,7 @@ mkMessageExchanges sessionNum execCount profile =
     { exchangeName = "execute_request (password)"
     , exchangeRequest = ExecuteRequest "import getpass\nprint(getpass.getpass('Hello'))"
                           defaultExecuteOptions { executeAllowStdin = True }
-    , exchangeReply = ExecuteReply (execCount + 5) ExecuteOk
+    , exchangeReply = ExecuteReply (execCount + 7) ExecuteOk
     , exchangeKernelRequests = [ (InputRequest
                                     InputOptions { inputPassword = True, inputPrompt = "Hello" }, InputReply
                                                                                                     "stdin")
@@ -236,7 +343,7 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
                               , ExecuteInputOutput "import getpass\nprint(getpass.getpass('Hello'))"
-                                  (execCount + 5)
+                                  (execCount + 7)
                               , StreamOutput StreamStdout "stdin\n"
                               , kernelIdle
                               ]
@@ -330,9 +437,9 @@ mkMessageExchanges sessionNum execCount profile =
     { exchangeName = "history_request (tail)"
     , exchangeRequest = HistoryRequest $ HistoryOptions False True $ HistoryTail 3
     , exchangeReply = HistoryReply $
-      [ HistoryItem sessionNum 4 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
-      , HistoryItem sessionNum 5 "x = input('Hello')\nprint(x)\nx" Nothing
-      , HistoryItem sessionNum 6 "import getpass\nprint(getpass.getpass('Hello'))" Nothing
+      [ HistoryItem sessionNum 6 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
+      , HistoryItem sessionNum 7 "x = input('Hello')\nprint(x)\nx" Nothing
+      , HistoryItem sessionNum 8 "import getpass\nprint(getpass.getpass('Hello'))" Nothing
       ]
     , exchangeKernelRequests = []
     , exchangeComms = []
@@ -342,9 +449,9 @@ mkMessageExchanges sessionNum execCount profile =
     { exchangeName = "history_request (tail output)"
     , exchangeRequest = HistoryRequest $ HistoryOptions True True $ HistoryTail 3
     , exchangeReply = HistoryReply $
-      [ HistoryItem sessionNum 4 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
-      , HistoryItem sessionNum 5 "x = input('Hello')\nprint(x)\nx" Nothing
-      , HistoryItem sessionNum 6 "import getpass\nprint(getpass.getpass('Hello'))" Nothing
+      [ HistoryItem sessionNum 6 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
+      , HistoryItem sessionNum 7 "x = input('Hello')\nprint(x)\nx" Nothing
+      , HistoryItem sessionNum 8 "import getpass\nprint(getpass.getpass('Hello'))" Nothing
       ]
     , exchangeKernelRequests = []
     , exchangeComms = []
@@ -352,13 +459,11 @@ mkMessageExchanges sessionNum execCount profile =
     }
   , MessageExchange
     { exchangeName = "history_request (range)"
-    , exchangeRequest = HistoryRequest $ HistoryOptions False True $ HistoryRange $ HistoryRangeOptions
-                                                                                      sessionNum
-                                                                                      4
-                                                                                      6
+    , exchangeRequest = HistoryRequest $ HistoryOptions False True $
+      HistoryRange $ HistoryRangeOptions sessionNum 6 8
     , exchangeReply = HistoryReply $
-      [ HistoryItem 0 4 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
-      , HistoryItem 0 5 "x = input('Hello')\nprint(x)\nx" Nothing
+      [ HistoryItem 0 6 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
+      , HistoryItem 0 7 "x = input('Hello')\nprint(x)\nx" Nothing
       ]
     , exchangeKernelRequests = []
     , exchangeComms = []
@@ -368,11 +473,11 @@ mkMessageExchanges sessionNum execCount profile =
     { exchangeName = "history_request (range output)"
     , exchangeRequest = HistoryRequest $ HistoryOptions True True $ HistoryRange $ HistoryRangeOptions
                                                                                      sessionNum
-                                                                                     4
                                                                                      6
+                                                                                     8
     , exchangeReply = HistoryReply $
-      [ HistoryItem 0 4 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
-      , HistoryItem 0 5 "x = input('Hello')\nprint(x)\nx" (Just "'stdin'")
+      [ HistoryItem 0 6 "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))" Nothing
+      , HistoryItem 0 7 "x = input('Hello')\nprint(x)\nx" (Just "'stdin'")
       ]
     , exchangeKernelRequests = []
     , exchangeComms = []
@@ -385,7 +490,7 @@ mkMessageExchanges sessionNum execCount profile =
                                                                                       "x = input('Hello')\nprint(?)\nx"
                                                                                       False
     , exchangeReply = HistoryReply $
-      [HistoryItem sessionNum 5 "x = input('Hello')\nprint(x)\nx" Nothing]
+      [HistoryItem sessionNum 7 "x = input('Hello')\nprint(x)\nx" Nothing]
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [kernelBusy, kernelIdle]
@@ -397,7 +502,7 @@ mkMessageExchanges sessionNum execCount profile =
                                                                                       "x = input('Hello')\nprint(?)\nx"
                                                                                       False
     , exchangeReply = HistoryReply $
-      [HistoryItem sessionNum 5 "x = input('Hello')\nprint(x)\nx" Nothing]
+      [HistoryItem sessionNum 7 "x = input('Hello')\nprint(x)\nx" Nothing]
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [kernelBusy, kernelIdle]
@@ -477,6 +582,12 @@ mkMessageExchanges sessionNum execCount profile =
     kernelIdle = KernelStatusOutput KernelIdle
     kernelBusy = KernelStatusOutput KernelBusy
 
+    str :: String -> String
+    str = id
+
+fakeUUID :: UUID.UUID
+fakeUUID = UUID.uuidFromString "fake"
+
 
 kernelRequestHandler' :: MVar [(KernelRequest, ClientReply)] -> MVar [KernelRequest] -> (Comm -> IO ()) -> KernelRequest -> IO ClientReply
 kernelRequestHandler' repliesVar var _ req = do
@@ -488,7 +599,18 @@ kernelRequestHandler' repliesVar var _ req = do
 
 
 commHandler' :: MVar [Comm] -> (Comm -> IO ()) -> Comm -> IO ()
-commHandler' var _ comm = modifyMVar_ var $ return . (comm :)
+commHandler' var _ comm = modifyMVar_ var $ return . (comm' :)
+  where
+    comm' =
+      case comm of
+        CommOpen _ val b c -> CommOpen fakeUUID (dropJSONKey "layout" val) b c
+        CommClose _ a -> CommClose fakeUUID a
+        CommMessage _ a -> CommMessage fakeUUID a
+
+    dropJSONKey key val =
+      case val of
+        Object o -> Object (HashMap.delete key o)
+        other -> other
 
 kernelOutputHandler' :: MVar [KernelOutput] -> (Comm -> IO ()) -> KernelOutput -> IO ()
 kernelOutputHandler' var _ out =
