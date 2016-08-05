@@ -9,7 +9,7 @@ import           System.Environment (setEnv)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Monad (forM_, unless, void)
 import           Control.Monad.Catch (finally)
-import           Control.Exception (SomeException)
+import           Control.Exception (SomeException, Exception, throwIO)
 import qualified Data.Map as Map
 import qualified Data.HashMap.Strict as HashMap
 import           Data.Monoid ((<>))
@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Aeson (encode, ToJSON(..), object, (.=))
 import           Data.Aeson.Types (Value(..))
-import           System.Process (spawnProcess, terminateProcess)
+import           System.Process (spawnProcess, terminateProcess, ProcessHandle)
 
 
 import           System.ZMQ4.Monadic (socket, Req(..), Dealer(..), send, receive, bind, connect, ZMQ,
@@ -36,10 +36,10 @@ import           Jupyter.Messages
 import           Jupyter.Messages.Metadata
 import qualified Jupyter.UUID as UUID
 
-import           Utils (inTempDir, connectedSocket)
+import           Utils (inTempDir, connectedSocket, shouldThrow)
 
 clientTests :: TestTree
-clientTests = testGroup "Client Tests" [testClient]
+clientTests = testGroup "Client Tests" [testClient, testHandlerExceptions]
 
 data MessageExchange =
        MessageExchange
@@ -52,6 +52,72 @@ data MessageExchange =
          }
   deriving (Eq, Show)
 
+startIPythonKernel :: KernelProfile -> IO ProcessHandle
+startIPythonKernel profile = do
+  writeProfile profile "profile.json"
+
+  -- set JPY_PARENT_PID to shut up the kernel about its Ctrl-C behaviour
+  setEnv "JPY_PARENT_PID" "-1"
+
+  -- Start the kernel, and then give it a bit of time to start. If we don't give it some time to
+  -- start, then it is possible for it to miss our first message. In that case, this test suite just
+  -- spins forever...
+  proc <- spawnProcess "python" ["-m", "ipykernel", "-f", "profile.json"]
+  threadDelay $ 500 * 1000
+
+  return proc
+
+data HandlerException = HandlerException
+  deriving (Eq, Ord, Show)
+instance Exception HandlerException
+
+testHandlerExceptions :: TestTree
+testHandlerExceptions = testCase "Client Handler Exceptions" $ do
+  let exception = const $ const $ throwIO HandlerException
+      returnStdin = const . const . return $ InputReply "<>"
+      handlerKernelRequestException = ClientHandlers exception defaultClientCommHandler defaultKernelOutputHandler
+      handlerCommException = ClientHandlers returnStdin exception defaultKernelOutputHandler
+      handlerKernelOutputException = ClientHandlers returnStdin defaultClientCommHandler exception
+
+  -- ConnectRequest results in status updates, so erroring on the kernel output
+  -- should raise an exception in the main thread.
+  raisesHandlerException $ runIPython handlerKernelOutputException $ const $
+    sendClientRequest ConnectRequest
+
+  -- ConnectRequest does not sent any stdin messages, so clients that error
+  -- when handling stdin messages should not crash here.
+  runIPython handlerKernelRequestException $ const $
+    sendClientRequest ConnectRequest
+
+  -- This particular ExecuteRequest should reply with comm messages, and
+  -- so a comm handler that raises an exception should cause the main thread to crash.
+  raisesHandlerException $ runIPython handlerCommException $ const $
+    sendClientRequest $
+      ExecuteRequest "import ipywidgets as widgets\nwidgets.FloatSlider()" defaultExecuteOptions
+
+  -- This particular ExecuteRequest should reply with kernel requests for stdin, and
+  -- so a kernel request handler that raises an exception should cause the main thread to crash.
+  raisesHandlerException $ runIPython handlerKernelRequestException $ const $
+    sendClientRequest $
+      ExecuteRequest "print(input())" defaultExecuteOptions { executeAllowStdin = True }
+
+  where
+    raisesHandlerException io = io `shouldThrow` [HandlerException]
+
+defaultClientCommHandler :: (Comm -> IO ()) -> Comm -> IO ()
+defaultClientCommHandler _ _ = return ()
+
+defaultKernelOutputHandler :: (Comm -> IO ()) -> KernelOutput -> IO ()
+defaultKernelOutputHandler _ _ = return ()
+
+runIPython :: ClientHandlers -> (KernelProfile -> Client a) -> IO a
+runIPython handlers action =
+  inTempDir $ \tmpDir ->
+    runClient Nothing Nothing handlers $ \profile -> do
+      proc <- liftIO $ startIPythonKernel profile
+      finally (action profile) $ liftIO $ terminateProcess proc
+
+
 -- Test that messages can be sent and received on the heartbeat socket.
 testClient :: TestTree
 testClient = testCaseSteps "Simple Client" $ \step -> do
@@ -61,22 +127,7 @@ testClient = testCaseSteps "Simple Client" $ \step -> do
   clientRepliesVar <- newEmptyMVar
   let clientHandlers = ClientHandlers (kernelRequestHandler' clientRepliesVar kernelRequestsVar) (commHandler' commsVar) (kernelOutputHandler' kernelOutputsVar)
 
-  inTempDir $ \tmpDir -> runClient Nothing Nothing clientHandlers $ \profile -> do
-    proc <- liftIO $ do
-      step "Starting kernel..."
-      writeProfile profile "profile.json"
-
-      -- set JPY_PARENT_PID to shut up the kernel about its Ctrl-C behaviour
-      setEnv "JPY_PARENT_PID" "-1"
-
-      -- Start the kernel, and then give it a bit of time to start. If we don't give it some time to
-      -- start, then it is possible for it to miss our first message. In that case, this test suite just
-      -- spins forever...
-      proc <- spawnProcess "python" ["-m", "ipykernel", "-f", "profile.json"]
-      threadDelay $ 500 * 1000
-
-      return proc
-
+  runIPython clientHandlers $ \profile -> do
     -- Wait for the kernel to initialize. We know that the kernel is done initializing when it sends its
     -- first response; however, sometimes we also get a "starting" status. Since later on we check for
     -- equality of kernel outputs, we want to get rid of this timing inconsistencey immediately by just 
@@ -106,31 +157,30 @@ testClient = testCaseSteps "Simple Client" $ \step -> do
     liftIO $ takeMVar kernelOutputsVar
 
     liftIO $ step "Checking messages exchanges..."
-    flip finally (liftIO $ terminateProcess proc) $
-      forM_ (mkMessageExchanges sessionNum execCount profile) $ \exchange@MessageExchange{..} -> do
-        liftIO $ do
-          step $ "\t..." ++ exchangeName
-          putMVar kernelOutputsVar []
-          putMVar commsVar []
-          putMVar kernelRequestsVar []
+    forM_ (mkMessageExchanges sessionNum execCount profile) $ \exchange@MessageExchange{..} -> do
+      liftIO $ do
+        step $ "\t..." ++ exchangeName
+        putMVar kernelOutputsVar []
+        putMVar commsVar []
+        putMVar kernelRequestsVar []
 
-          void $ tryTakeMVar clientRepliesVar
-          putMVar clientRepliesVar exchangeKernelRequests
+        void $ tryTakeMVar clientRepliesVar
+        putMVar clientRepliesVar exchangeKernelRequests
 
-        reply <- sendClientRequest exchangeRequest
+      reply <- sendClientRequest exchangeRequest
 
-        liftIO $ do
-          waitForKernelIdle kernelOutputsVar
-          exchangeReply @=? reply
+      liftIO $ do
+        waitForKernelIdle kernelOutputsVar
+        exchangeReply @=? reply
 
-          receivedComms <- takeMVar commsVar
-          exchangeComms @=? reverse receivedComms
+        receivedComms <- takeMVar commsVar
+        exchangeComms @=? reverse receivedComms
 
-          receivedKernelRequests <- takeMVar kernelRequestsVar
-          map fst exchangeKernelRequests  @=? reverse receivedKernelRequests
+        receivedKernelRequests <- takeMVar kernelRequestsVar
+        map fst exchangeKernelRequests  @=? reverse receivedKernelRequests
 
-          receivedOutputs <- takeMVar kernelOutputsVar
-          exchangeKernelOutputs @=? reverse receivedOutputs
+        receivedOutputs <- takeMVar kernelOutputsVar
+        exchangeKernelOutputs @=? reverse receivedOutputs
 
 waitForKernelIdle :: MVar [KernelOutput] -> IO ()
 waitForKernelIdle var = do

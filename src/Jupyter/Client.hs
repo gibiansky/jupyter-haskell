@@ -16,8 +16,10 @@ import           Control.Monad.Trans.Control (liftBaseWith)
 import           Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
 import           Data.Aeson (encode)
 import qualified Data.ByteString.Lazy as LBS
+import           Control.Exception (throwIO, SomeException, bracket, catch,
+                                    AsyncException(ThreadKilled))
 
-import           Control.Concurrent.Async (async, link)
+import           Control.Concurrent.Async (async, link, link2, cancel, Async)
 
 import           Jupyter.ZeroMQ (ClientSockets(..), withClientSockets, sendMessage, receiveMessage,
                                  messagingError, mkRequestHeader, KernelProfile(..), mkReplyHeader)
@@ -64,13 +66,30 @@ runClient mProfile mUser clientHandlers client =
             , clientLiftZMQ = liftIO . runInBase
             }
 
-      listenStdin clientState clientHandlers
-      listenIopub clientState clientHandlers
+      let setupListeners = do
+            async1 <- listenStdin clientState clientHandlers
+            async2 <- listenIopub clientState clientHandlers
 
-      runReaderT (unClient $ client profile) clientState
+            -- Ensure that if any exceptions are thrown on the handler threads,
+            -- those exceptions are re-raised on the main thread.
+            link async1
+            link2 async1 async2
 
-listenIopub :: ClientState -> ClientHandlers -> IO ()
-listenIopub ClientState { .. } handlers = async (forever respondIopub) >>= link
+            return (async1, async2)
+
+      -- Ensure that if any exceptions are thrown on the main thread, the asyncs
+      -- are cancelled with a ThreadKilled exception, and that if no exceptions
+      -- are thrown, then the threads are terminated as appropriate.
+      bracket setupListeners
+              (\(async1, async2) -> cancel async1 >> cancel async2)
+              (const $ runReaderT (unClient $ client profile) clientState)
+
+threadKilledHandler :: AsyncException -> IO ()
+threadKilledHandler ThreadKilled = return ()
+threadKilledHandler ex = throwIO ex
+
+listenIopub :: ClientState -> ClientHandlers -> IO (Async ())
+listenIopub ClientState { .. } handlers = async $ catch (forever respondIopub) threadKilledHandler
   where
     respondIopub = do
       received <- clientLiftZMQ $ receiveMessage (clientIopubSocket clientSockets)
@@ -92,8 +111,8 @@ listenIopub ClientState { .. } handlers = async (forever respondIopub) >>= link
             Left comm    -> commHandler handlers sendReplyComm comm
             Right output -> kernelOutputHandler handlers sendReplyComm output
 
-listenStdin :: ClientState -> ClientHandlers -> IO ()
-listenStdin ClientState{..} handlers = async (forever respondStdin) >>= link
+listenStdin :: ClientState -> ClientHandlers -> IO (Async ())
+listenStdin ClientState{..} handlers = async $ catch (forever respondStdin) threadKilledHandler
   where
     respondStdin = do
       received <- clientLiftZMQ $ receiveMessage (clientStdinSocket clientSockets)
