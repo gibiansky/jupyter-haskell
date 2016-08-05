@@ -43,7 +43,8 @@ import           Data.Digest.Pure.SHA as SHA
 
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
                                       Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
-                                      Sender, lastEndpoint, bind, connect, subscribe, ZMQError, setIdentity, restrict)
+                                      Sender, lastEndpoint, bind, unbind, connect, subscribe,
+                                      ZMQError, setIdentity, restrict)
 
 import           Jupyter.Messages.Metadata (MessageHeader(..), IsMessage(..), Username(..))
 import qualified Jupyter.UUID as UUID
@@ -332,16 +333,25 @@ connectSocket :: forall z t. Maybe KernelProfile -> Port -> (KernelProfile -> In
 connectSocket mProfile startPort accessor sock = do
   case mProfile of
     Just _  -> connect sock (extractAddress mProfile accessor)
-    Nothing -> findRandomPort 100 startPort
+    Nothing -> findOpenPort 100 startPort
 
   endpoint sock
 
   where
-    findRandomPort 0 _ = fail "fatal error (Jupyter.ZeroMQ): Could not find port to connect to."
-    findRandomPort triesLeft tryPort =
+    findOpenPort 0 _ = fail "fatal error (Jupyter.ZeroMQ): Could not find port to connect to."
+    findOpenPort triesLeft tryPort =
       let handler :: ZMQError -> ZMQ z ()
-          handler = const $ findRandomPort (triesLeft - 1) (tryPort + 1)
-      in connect sock ("tcp://127.0.0.1:" ++ show tryPort) `catch` handler
+          handler = const $ findOpenPort (triesLeft - 1) (tryPort + 1)
+          address = "tcp://127.0.0.1:" ++ show (tryPort :: Int)
+      in flip catch handler $ do
+        -- `connect` allows you to connect multiple sockets to the same port. We don't want that! So, in
+        -- order to find out if we have a kernel already running on the port we're about to connect to, we
+        -- `bind` the socket. If the bind fails, that means the port is used; if it doesn't fail, the port
+        -- is open, so we unbind and then connect to it. This is pretty hacky and not thread-safe, but
+        -- should not cause any issues in practice.
+        bind sock address
+        unbind sock address
+        connect sock address
 
 
 bindSocket :: Maybe KernelProfile -> (KernelProfile -> Int) -> Socket z t -> ZMQ z Int

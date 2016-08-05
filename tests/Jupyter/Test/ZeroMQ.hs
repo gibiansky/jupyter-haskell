@@ -14,6 +14,10 @@ import           System.ZMQ4.Monadic (socket, Req(..), send, receive, bind, conn
                                       SocketType)
 
 import           Jupyter.ZeroMQ
+import           Jupyter.Kernel
+import           Jupyter.Client
+import           Jupyter.Messages
+import           Jupyter.Messages.Metadata
 
 import           Utils (inTempDir, connectedSocket)
 
@@ -36,7 +40,7 @@ testReadProfile :: TestTree
 testReadProfile = testCase "Reading profile file" $
   inTempDir $ \tmp -> do
     let filename = "profile.json"
-    LBS.writeFile filename $ encode testProfile
+    writeProfile testProfile filename
     profile <- readProfile filename
     Just testProfile @=? profile
   where

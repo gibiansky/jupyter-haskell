@@ -41,7 +41,8 @@ import           Data.Text (Text)
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Control (liftBaseWith)
 
-import           Control.Concurrent.Async (link2, waitAny)
+import           Control.Exception (bracket, AsyncException(..), catch, throwIO)
+import           Control.Concurrent.Async (link2, waitAny, cancel, Async)
 
 import           System.ZMQ4.Monadic (ZMQ, Socket, Rep, Router, Pub, async, receive, send)
 
@@ -171,7 +172,7 @@ serve :: KernelProfile         -- ^ The kernel profile specifies how to listen f
                                -- frontend.
       -> ClientRequestHandler  -- ^The request handler is called when 'ClientRequest' messages are
                                -- received from a frontend.
-      -> IO a
+      -> IO ()
 serve profile = serveInternal (Just profile) (const $ return ())
 
 -- | Indefinitely serve a kernel on some ports. Ports are allocated dynamically and so, unlike
@@ -197,7 +198,7 @@ serveWithDynamicPorts :: (KernelProfile -> IO ()) -- ^ This function is called w
                                                -- received from a frontend.
                       -> ClientRequestHandler  -- ^The request handler is called when 'ClientRequest'
                                                -- messages are received from a frontend.
-                      -> IO a
+                      -> IO ()
 serveWithDynamicPorts = serveInternal Nothing
 
 
@@ -218,7 +219,7 @@ serveInternal :: Maybe KernelProfile
               -> (KernelProfile -> IO ())
               -> CommHandler
               -> ClientRequestHandler
-              -> IO a
+              -> IO ()
 serveInternal mProfile profileHandler commHandler requestHandler =
   withKernelSockets mProfile $ \profile KernelSockets { .. } -> do
     -- If anything is going to be done with the profile information, do it now, after sockets have been
@@ -226,23 +227,38 @@ serveInternal mProfile profileHandler commHandler requestHandler =
     liftIO $ profileHandler profile
 
     let key = profileSignatureKey profile
-        loop = async . forever
+        -- Repeat an action forever. If the thread is killed with a ThreadKilled exception,
+        -- do not propagate the exception, but instead just let the thread die. This ensures that
+        -- when all the Async's are linked together, the ThreadKilled does not get propagated to the
+        -- main thread, which presumably is the thread that killed this action.
+        loop action = 
+            async $ liftBaseWith $ \runInBase ->
+              catch (runInBase $ forever action) threadKilledHandler
         handlers = (commHandler, requestHandler)
 
     -- Start all listening loops in separate threads.
-    async1 <- loop $ echoHeartbeat kernelHeartbeatSocket
-    async2 <- loop $ serveRouter kernelControlSocket key kernelIopubSocket kernelStdinSocket handlers
-    async3 <- loop $ serveRouter kernelShellSocket key kernelIopubSocket kernelStdinSocket handlers
+    let setupListeners = do
+          async1 <- loop $ echoHeartbeat kernelHeartbeatSocket
+          async2 <- loop $ serveRouter kernelControlSocket key kernelIopubSocket kernelStdinSocket handlers
+          async3 <- loop $ serveRouter kernelShellSocket key kernelIopubSocket kernelStdinSocket handlers
 
-    -- Make sure that a fatal exception on any thread kills all threads.
-    liftIO $ do
-      link2 async1 async2
-      link2 async2 async3
-      link2 async3 async1
+          -- Make sure that a fatal exception on any thread kills all threads.
+          liftIO $ link2 async1 async2
+          liftIO $ link2 async2 async3
+          liftIO $ link2 async3 async1
+
+          return [async1, async2, async3]
 
     -- Wait indefinitely; if any of the threads encounter a fatal exception, the fatal exception is
-    -- re-raised on the main thread.
-      snd <$> waitAny [async1, async2, async3]
+    -- re-raised on the main thread. If the main thread dies, then the asyncs are killed via 'cancel'.
+    liftBaseWith $ \runInBase ->
+      bracket (runInBase setupListeners)
+              (mapM_ cancel)
+              (fmap snd . waitAny)
+
+threadKilledHandler :: AsyncException -> IO ()
+threadKilledHandler ThreadKilled = return ()
+threadKilledHandler ex = throwIO ex
 
 -- | Heartbeat once.
 --

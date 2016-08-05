@@ -9,7 +9,7 @@ import           System.Environment (setEnv)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Monad (forM_, unless, void)
 import           Control.Monad.Catch (finally)
-import           Control.Exception (SomeException, Exception, throwIO)
+import           Control.Exception (SomeException, Exception, throwIO, bracket)
 import qualified Data.Map as Map
 import qualified Data.HashMap.Strict as HashMap
 import           Data.Monoid ((<>))
@@ -36,10 +36,10 @@ import           Jupyter.Messages
 import           Jupyter.Messages.Metadata
 import qualified Jupyter.UUID as UUID
 
-import           Utils (inTempDir, connectedSocket, shouldThrow)
+import           Utils (inTempDir, connectedSocket, shouldThrow, HandlerException(..))
 
 clientTests :: TestTree
-clientTests = testGroup "Client Tests" [testClient, testHandlerExceptions]
+clientTests = testGroup "Client Tests" [testClientPortsTaken, testClient, testHandlerExceptions]
 
 data MessageExchange =
        MessageExchange
@@ -54,7 +54,9 @@ data MessageExchange =
 
 startIPythonKernel :: KernelProfile -> IO ProcessHandle
 startIPythonKernel profile = do
-  writeProfile profile "profile.json"
+  uuid <- UUID.uuidToString <$> UUID.random
+  let filename = "profile-" ++ uuid ++ ".json"
+  writeProfile profile filename
 
   -- set JPY_PARENT_PID to shut up the kernel about its Ctrl-C behaviour
   setEnv "JPY_PARENT_PID" "-1"
@@ -62,14 +64,10 @@ startIPythonKernel profile = do
   -- Start the kernel, and then give it a bit of time to start. If we don't give it some time to
   -- start, then it is possible for it to miss our first message. In that case, this test suite just
   -- spins forever...
-  proc <- spawnProcess "python" ["-m", "ipykernel", "-f", "profile.json"]
+  proc <- spawnProcess "python" ["-m", "ipykernel", "-f", filename]
   threadDelay $ 500 * 1000
 
   return proc
-
-data HandlerException = HandlerException
-  deriving (Eq, Ord, Show)
-instance Exception HandlerException
 
 testHandlerExceptions :: TestTree
 testHandlerExceptions = testCase "Client Handler Exceptions" $ do
@@ -117,15 +115,41 @@ runIPython handlers action =
       proc <- liftIO $ startIPythonKernel profile
       finally (action profile) $ liftIO $ terminateProcess proc
 
+testClientPortsTaken :: TestTree
+testClientPortsTaken = testCase "Client Ports Taken"  $
+  inTempDir $ \_ ->
+    runClient Nothing Nothing emptyHandler $ \profile1 -> liftIO $
+      bracket (startIPythonKernel profile1) terminateProcess $ const $
+        runClient Nothing Nothing emptyHandler $ \profile2 -> liftIO $
+          bracket (startIPythonKernel profile2) terminateProcess $ const $
+            runClient Nothing Nothing emptyHandler $ \profile3 -> liftIO $ do
+              1 + profileShellPort profile1     @=? profileShellPort profile2
+              1 + profileHeartbeatPort profile1 @=? profileHeartbeatPort profile2
+              1 + profileControlPort profile1   @=? profileControlPort profile2
+              1 + profileStdinPort profile1     @=? profileStdinPort profile2
+              1 + profileIopubPort profile1     @=? profileIopubPort profile2
+              1 + profileShellPort profile2     @=? profileShellPort profile3
+              1 + profileHeartbeatPort profile2 @=? profileHeartbeatPort profile3
+              1 + profileControlPort profile2   @=? profileControlPort profile3
+              1 + profileStdinPort profile2     @=? profileStdinPort profile3
+              1 + profileIopubPort profile2     @=? profileIopubPort profile3
+    where
+      emptyHandler =
+          ClientHandlers (const . const . return $ InputReply "")
+                         (const . const $ return ())
+                         (const . const $ return ())
+
 
 -- Test that messages can be sent and received on the heartbeat socket.
 testClient :: TestTree
-testClient = testCaseSteps "Simple Client" $ \step -> do
+testClient = testCaseSteps "Communicate with IPython Kernel" $ \step -> do
   kernelOutputsVar <- newMVar []
   commsVar <- newEmptyMVar
   kernelRequestsVar <- newEmptyMVar
   clientRepliesVar <- newEmptyMVar
-  let clientHandlers = ClientHandlers (kernelRequestHandler' clientRepliesVar kernelRequestsVar) (commHandler' commsVar) (kernelOutputHandler' kernelOutputsVar)
+  let clientHandlers = ClientHandlers (kernelRequestHandler' clientRepliesVar kernelRequestsVar)
+                                      (commHandler' commsVar)
+                                      (kernelOutputHandler' kernelOutputsVar)
 
   runIPython clientHandlers $ \profile -> do
     -- Wait for the kernel to initialize. We know that the kernel is done initializing when it sends its

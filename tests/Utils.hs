@@ -40,3 +40,8 @@ connectedSocket profile accessor socketType = do
   sock <- socket socketType
   connect sock $ "tcp://127.0.0.1:" ++ show (accessor profile)
   return sock
+
+-- | An exception type to be thrown during tests.
+data HandlerException = HandlerException
+  deriving (Eq, Ord, Show)
+instance Exception HandlerException
