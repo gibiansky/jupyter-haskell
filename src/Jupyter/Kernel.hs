@@ -37,11 +37,12 @@ import           Control.Monad (forever)
 import           System.IO (hPutStrLn, stderr)
 import           Data.ByteString (ByteString)
 import           Data.Text (Text)
+import           System.Exit (exitSuccess)
 
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Control (liftBaseWith)
 
-import           Control.Exception (bracket, AsyncException(..), catch, throwIO)
+import           Control.Exception (bracket, AsyncException(..), catch, throwIO, finally, SomeException)
 import           Control.Concurrent.Async (link2, waitAny, cancel, Async)
 
 import           System.ZMQ4.Monadic (ZMQ, Socket, Rep, Router, Pub, async, receive, send)
@@ -137,28 +138,31 @@ defaultCommHandler :: CommHandler
 defaultCommHandler _ _ = return ()
 
 -- | Handler which responds to all 'ClientRequest' messages with a default, empty reply.
-defaultClientRequestHandler :: KernelProfile -- ^ The profile this kernel is running on. Used to respond to 'ConnectRequest's.
-                            -> KernelInfo    -- ^ Information about this kernel. Used to respond to 'KernelInfoRequest's.
+defaultClientRequestHandler :: KernelProfile -- ^ The profile this kernel is running on. Used to
+                                             -- respond to 'ConnectRequest's.
+                            -> KernelInfo    -- ^ Information about this kernel. Used to respond to
+                                             -- 'KernelInfoRequest's.
                             -> ClientRequestHandler
-defaultClientRequestHandler KernelProfile{..} kernelInfo _ req =
-  return $
-    case req of
-      ExecuteRequest{} -> ExecuteReply 0 ExecuteOk
-      InspectRequest{} -> InspectReply $ InspectOk Nothing
-      HistoryRequest{} -> HistoryReply []
-      CompleteRequest _ (CodeOffset offset) ->
-        CompleteReply $ CompleteOk [] (CursorRange offset offset) mempty
-      IsCompleteRequest{} -> IsCompleteReply CodeUnknown
-      CommInfoRequest{} -> CommInfoReply mempty
-      ShutdownRequest restart -> ShutdownReply restart
-      KernelInfoRequest{} -> KernelInfoReply kernelInfo
-      ConnectRequest{} -> ConnectReply
-                            ConnectInfo
-                              { connectShellPort = profileShellPort
-                              , connectIopubPort = profileIopubPort
-                              , connectHeartbeatPort = profileHeartbeatPort
-                              , connectStdinPort = profileStdinPort
-                              }
+defaultClientRequestHandler KernelProfile { .. } kernelInfo callbacks req =
+  case req of
+    ExecuteRequest code _ -> do
+      sendKernelOutput callbacks $ ExecuteInputOutput 0 code
+      return $ ExecuteReply 0 ExecuteOk
+    InspectRequest{} -> return $ InspectReply $ InspectOk Nothing
+    HistoryRequest{} -> return $ HistoryReply []
+    CompleteRequest _ (CodeOffset offset) ->
+      return $ CompleteReply $ CompleteOk [] (CursorRange offset offset) mempty
+    IsCompleteRequest{} -> return $ IsCompleteReply CodeUnknown
+    CommInfoRequest{} -> return $ CommInfoReply mempty
+    ShutdownRequest restart -> return $ ShutdownReply restart
+    KernelInfoRequest{} -> return $ KernelInfoReply kernelInfo
+    ConnectRequest{} -> return $ ConnectReply
+                                   ConnectInfo
+                                     { connectShellPort = profileShellPort
+                                     , connectIopubPort = profileIopubPort
+                                     , connectHeartbeatPort = profileHeartbeatPort
+                                     , connectStdinPort = profileStdinPort
+                                     }
 
 -- | Indefinitely serve a kernel on the provided ports. If the ports are not open, fails with an
 -- exception.
@@ -298,7 +302,8 @@ serveRouter sock key iopub stdin handlers =
               sendMessage k s replyHeader msg
         in handleRequest sendReply publishers handlers message
   where
-    stdinCommunicate header req = do
+    stdinCommunicate parentHeader req = do
+      header <- liftIO $ mkReplyHeader parentHeader req
       sendMessage key stdin header req
       received <- receiveMessage stdin
       case received of
@@ -317,15 +322,18 @@ handleRequest :: (KernelReply -> IO ()) -- ^ Callback to send reply messages to 
               -> (CommHandler, ClientRequestHandler) -- ^ Handlers for messages from frontends
               -> Either ClientRequest Comm -- ^ The received message content
               -> IO ()
-handleRequest sendReply publishers (commHandler, requestHandler) message =
+handleRequest sendReply callbacks (commHandler, requestHandler) message =
   case message of
-    Left clientRequest ->
-      let handle = requestHandler publishers clientRequest >>= sendReply
-      in case clientRequest of
-        ExecuteRequest{} -> do
-          sendKernelOutput publishers $ KernelStatusOutput KernelBusy
-          handle
-          sendKernelOutput publishers $ KernelStatusOutput KernelIdle
-        _ -> handle
-
-    Right comm -> commHandler publishers comm
+    Left clientRequest -> do
+      output $ KernelStatusOutput KernelBusy
+      finally (requestHandler callbacks clientRequest >>= sendReply) $
+        case clientRequest of
+          ShutdownRequest restart -> do
+            output $ ShutdownNotificationOutput restart
+            output $ KernelStatusOutput KernelIdle
+            exitSuccess
+          _ -> output $ KernelStatusOutput KernelIdle
+ 
+    Right comm -> commHandler callbacks comm
+  where
+    output = sendKernelOutput callbacks

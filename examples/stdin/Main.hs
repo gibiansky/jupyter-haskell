@@ -5,8 +5,9 @@ module Main(main) where
 import           System.Environment (getArgs)
 import           System.Exit (exitFailure)
 import           System.IO (stderr)
+import           Control.Monad (when)
 import qualified Data.Text.IO as T
-import Data.Text (Text)
+import           Data.Text (Text)
 
 import           Jupyter.Install (installKernel, simpleKernelspec, InstallUser(..), InstallResult(..),
                                   Kernelspec)
@@ -60,6 +61,7 @@ clientRequestHandler :: KernelProfile -> ClientRequestHandler
 clientRequestHandler profile callbacks req =
   case req of
     ExecuteRequest (CodeBlock code) _ -> do
+      sendKernelOutput callbacks $ ExecuteInputOutput 1 (CodeBlock code)
       echoStdin code callbacks
       return $ ExecuteReply 1 ExecuteOk
     _ -> defaultClientRequestHandler profile (simpleKernelInfo "Stdin") callbacks req
@@ -69,10 +71,11 @@ clientRequestHandler profile callbacks req =
 --
 -- If the execute promppt is "password", then the input is done in password mode.
 echoStdin :: Text -> KernelCallbacks -> IO ()
-echoStdin code callbacks = do
-  clientReply <- sendKernelRequest callbacks $
-                   InputRequest
-                     InputOptions { inputPrompt = code, inputPassword = code == "password" }
-  case clientReply of
-    InputReply stdinText ->
-      sendKernelOutput callbacks $ DisplayDataOutput $ displayPlain stdinText
+echoStdin code callbacks =
+  when (code /= "skip") $ do
+    clientReply <- sendKernelRequest callbacks $
+                     InputRequest
+                       InputOptions { inputPrompt = code, inputPassword = code == "password" }
+    case clientReply of
+      InputReply stdinText ->
+        sendKernelOutput callbacks $ DisplayDataOutput $ displayPlain stdinText

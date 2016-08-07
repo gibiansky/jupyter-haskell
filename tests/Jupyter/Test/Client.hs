@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 module Jupyter.Test.Client (clientTests) where
 
 import           Control.Concurrent (newMVar, swapMVar, newEmptyMVar, MVar, forkIO, putMVar, takeMVar,
@@ -20,6 +19,7 @@ import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertFailure
 
 import           Data.ByteString (ByteString)
 import qualified Data.Text as T
+import           Data.Text (Text)
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Aeson (encode, ToJSON(..), object, (.=))
 import           Data.Aeson.Types (Value(..))
@@ -33,41 +33,293 @@ import           Jupyter.ZeroMQ
 import           Jupyter.Kernel
 import           Jupyter.Client
 import           Jupyter.Messages
+import           Jupyter.Install
 import           Jupyter.Messages.Metadata
 import qualified Jupyter.UUID as UUID
 
+import           Jupyter.Test.MessageExchange
 import           Utils (inTempDir, connectedSocket, shouldThrow, HandlerException(..))
 
 clientTests :: TestTree
-clientTests = testGroup "Client Tests" [testClientPortsTaken, testClient, testHandlerExceptions]
+clientTests = testGroup "Client Tests"
+                [ testBasic
+                , testStdin
+                , testCalculator
+                , testClientPortsTaken
+                , testClient
+                , testHandlerExceptions
+                , testFindingKernelspecs
+                ]
 
-data MessageExchange =
-       MessageExchange
-         { exchangeName :: String
-         , exchangeRequest :: ClientRequest
-         , exchangeReply :: KernelReply
-         , exchangeKernelRequests :: [(KernelRequest, ClientReply)]
-         , exchangeComms :: [Comm]
-         , exchangeKernelOutputs :: [KernelOutput]
-         }
-  deriving (Eq, Show)
+testFindingKernelspecs :: TestTree
+testFindingKernelspecs = testCase "Finding Kernelspecs" $ do
+  kernels <- findKernels
+  let kernelNames = map kernelspecDisplayName kernels
+  assertBool "Basic kernelspec not found" $ "Basic" `elem` kernelNames
+  assertBool "Calculator kernelspec not found" $ "Calculator" `elem` kernelNames
+  assertBool "Python 3 kernelspec not found" $ "Python 3" `elem` kernelNames
+  assertBool "Stdin kernelspec not found" $ "Stdin" `elem` kernelNames
 
+  let expectedKernels = [("basic", "Basic"), ("stdin", "Stdin"), ("calculator", "Calculator")]
+  forM_ expectedKernels $ \(name, displayName) -> do
+    Just kernel <- findKernel name
+    kernelspecLanguage kernel @=? name
+    kernelspecDisplayName kernel @=? displayName
+    assertBool "Connection file command doesn't include connection file" $
+      "abcxyz" `elem` kernelspecCommand kernel "" "abcxyz"
+
+testBasic :: TestTree
+testBasic = 
+  testMessageExchange "Basic Kernel" (commandFromKernelspec "basic") "" $
+    \sessionNum execCount profile ->
+      [ MessageExchange
+        { exchangeName = "execute_request"
+        , exchangeRequest = ExecuteRequest "some input" defaultExecuteOptions
+        , exchangeReply = ExecuteReply 0 ExecuteOk
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, ExecuteInputOutput 0 "some input", kernelIdle]
+        }
+      , MessageExchange
+        { exchangeName = "inspect_request"
+        , exchangeRequest = InspectRequest "3" 1 DetailLow
+        , exchangeReply = InspectReply (InspectOk Nothing)
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+        }
+      , MessageExchange
+        { exchangeName = "complete_request"
+        , exchangeRequest = CompleteRequest "prinx" 5
+        , exchangeReply = CompleteReply $ CompleteOk [] (CursorRange 5 5) mempty
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+        }
+      ] ++ defaultMessageExchange "Basic" profile
+
+defaultMessageExchange :: Text -> KernelProfile -> [MessageExchange]
+defaultMessageExchange name profile =
+  [ MessageExchange
+    { exchangeName = "connect_request"
+    , exchangeRequest = ConnectRequest
+    , exchangeReply = ConnectReply
+                        ConnectInfo
+                          { connectShellPort = profileShellPort profile
+                          , connectIopubPort = profileIopubPort profile
+                          , connectStdinPort = profileStdinPort profile
+                          , connectHeartbeatPort = profileHeartbeatPort profile
+                          }
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "kernel_info_request"
+    , exchangeRequest = KernelInfoRequest
+    , exchangeReply = KernelInfoReply $ simpleKernelInfo name
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "history_request"
+    , exchangeRequest = HistoryRequest $ HistoryOptions False True $ HistoryTail 3
+    , exchangeReply = HistoryReply []
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+    }
+  , MessageExchange
+    { exchangeName = "shutdown (restart)"
+    , exchangeRequest = ShutdownRequest Restart
+    , exchangeReply = ShutdownReply Restart
+    , exchangeKernelRequests = []
+    , exchangeComms = []
+    , exchangeKernelOutputs = [kernelBusy, ShutdownNotificationOutput Restart, kernelIdle]
+    }
+  ]
+
+testStdin :: TestTree
+testStdin =
+  testMessageExchange "Stdin Kernel" (commandFromKernelspec "stdin") "skip" $
+    \sessionNum execCount profile ->
+      [ MessageExchange
+        { exchangeName = "execute_request (input)"
+        , exchangeRequest = ExecuteRequest "prompt"
+                              defaultExecuteOptions { executeAllowStdin = True }
+        , exchangeReply = ExecuteReply 1 ExecuteOk
+        , exchangeKernelRequests = [ (InputRequest
+                                        InputOptions
+                                          { inputPassword = False
+                                          , inputPrompt = "prompt"
+                                          }, InputReply "stdin")
+                                   ]
+        , exchangeComms = []
+        , exchangeKernelOutputs = [ kernelBusy
+                                  , ExecuteInputOutput 1 "prompt"
+                                  , DisplayDataOutput $ displayPlain "stdin"
+                                  , kernelIdle
+                                  ]
+        }
+      , MessageExchange
+        { exchangeName = "execute_request (skip input)"
+        , exchangeRequest = ExecuteRequest "skip"
+                              defaultExecuteOptions { executeAllowStdin = True }
+        , exchangeReply = ExecuteReply 1 ExecuteOk
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [ kernelBusy
+                                  , ExecuteInputOutput 1 "skip"
+                                  , kernelIdle
+                                  ]
+        }
+      , MessageExchange
+        { exchangeName = "execute_request (input password)"
+        , exchangeRequest = ExecuteRequest "password"
+                              defaultExecuteOptions { executeAllowStdin = True }
+        , exchangeReply = ExecuteReply 1 ExecuteOk
+        , exchangeKernelRequests = [ (InputRequest
+                                        InputOptions
+                                          { inputPassword = True
+                                          , inputPrompt = "password"
+                                          }, InputReply "stdin two")
+                                   ]
+        , exchangeComms = []
+        , exchangeKernelOutputs = [ kernelBusy
+                                  , ExecuteInputOutput 1 "password"
+                                  , DisplayDataOutput $ displayPlain "stdin two"
+                                  , kernelIdle
+                                  ]
+        }
+      ] ++ defaultMessageExchange "Stdin" profile
+
+testCalculator :: TestTree
+testCalculator =
+  testMessageExchange "Calculator Kernel" (commandFromKernelspec "calculator") "Lit 5" $
+    \sessionNum execCount profile ->
+      [ MessageExchange
+        { exchangeName = "connect_request"
+        , exchangeRequest = ConnectRequest
+        , exchangeReply = ConnectReply
+                            ConnectInfo
+                              { connectShellPort = profileShellPort profile
+                              , connectIopubPort = profileIopubPort profile
+                              , connectStdinPort = profileStdinPort profile
+                              , connectHeartbeatPort = profileHeartbeatPort profile
+                              }
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+        }
+      , MessageExchange
+        { exchangeName = "execute_request (compute)"
+        , exchangeRequest = ExecuteRequest
+                              "Compute [('x', 3)] (Add (Divide (Lit 100) (Lit 5)) (Multiply (Lit 10) (Var 'x')))"
+                              defaultExecuteOptions
+        , exchangeReply = ExecuteReply (execCount + 1) ExecuteOk
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [ kernelBusy
+                                  , ExecuteInputOutput
+                                      (execCount + 1)
+                                      "Compute [('x', 3)] (Add (Divide (Lit 100) (Lit 5)) (Multiply (Lit 10) (Var 'x')))"
+                                  , DisplayDataOutput $ displayPlain "50"
+                                  , kernelIdle
+                                  ]
+        }
+      , MessageExchange
+        { exchangeName = "execute_request (compute)"
+        , exchangeRequest = ExecuteRequest
+                              "Print (Add (Divide (Lit 100) (Lit 5)) (Multiply (Lit 10) (Var 'x')))"
+                              defaultExecuteOptions
+        , exchangeReply = ExecuteReply (execCount + 2) ExecuteOk
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [ kernelBusy
+                                  , ExecuteInputOutput
+                                      (execCount + 2)
+                                      "Print (Add (Divide (Lit 100) (Lit 5)) (Multiply (Lit 10) (Var 'x')))"
+                                  , DisplayDataOutput $
+                                    displayPlain "((100 / 5) + (10 * x))" <> displayLatex
+                                                                               "(\\frac{100}{5} + (10 \\cdot x))"
+                                  , kernelIdle
+                                  ]
+        }
+      , MessageExchange
+        { exchangeName = "complete_request"
+        , exchangeRequest = CompleteRequest "Computx" 6
+        , exchangeReply = CompleteReply $ CompleteOk ["Compute"] (CursorRange 0 6) mempty
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+        }
+      , MessageExchange
+        { exchangeName = "inspect_request (low)"
+        , exchangeRequest = InspectRequest "Printblahblah" 5 DetailLow
+        , exchangeReply = InspectReply $ InspectOk $ Just $
+          displayPlain "Print: Print an expression as text or LaTeX."
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+        }
+      , MessageExchange
+        { exchangeName = "kernel_info_request"
+        , exchangeRequest = KernelInfoRequest
+        , exchangeReply = KernelInfoReply $
+          KernelInfo
+            { kernelProtocolVersion = "5.0"
+            , kernelBanner = "Welcome to the Haskell Calculator Test Kernel!"
+            , kernelImplementation = "Calculator-Kernel"
+            , kernelImplementationVersion = "1.0"
+            , kernelLanguageInfo = LanguageInfo
+              { languageName = "calculator"
+              , languageVersion = "1.0"
+              , languageMimetype = "text/plain"
+              , languageFileExtension = ".txt"
+              , languagePygmentsLexer = Nothing
+              , languageCodeMirrorMode = Nothing
+              , languageNbconvertExporter = Nothing
+              }
+            , kernelHelpLinks = [ HelpLink
+                                  { helpLinkText = "jupyter package doc"
+                                  , helpLinkURL = "http://github.com/gibiansky/jupyter-haskell"
+                                  }
+                                ]
+            }
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+        }
+      , MessageExchange
+        { exchangeName = "history_request"
+        , exchangeRequest = HistoryRequest $ HistoryOptions False True $ HistoryTail 3
+        , exchangeReply = HistoryReply []
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, kernelIdle]
+        }
+      , MessageExchange
+        { exchangeName = "shutdown (restart)"
+        , exchangeRequest = ShutdownRequest Restart
+        , exchangeReply = ShutdownReply Restart
+        , exchangeKernelRequests = []
+        , exchangeComms = []
+        , exchangeKernelOutputs = [kernelBusy, ShutdownNotificationOutput Restart, kernelIdle]
+        }
+      ]
+
+commandFromKernelspec :: Text -> IO (FilePath -> [String])
+commandFromKernelspec name = do
+  kernel <- findKernel name
+  case kernel of
+    Nothing   -> fail $ "Could not find kernelspec " ++ T.unpack name
+    Just spec -> return $ kernelspecCommand spec ""
+  
 startIPythonKernel :: KernelProfile -> IO ProcessHandle
-startIPythonKernel profile = do
-  uuid <- UUID.uuidToString <$> UUID.random
-  let filename = "profile-" ++ uuid ++ ".json"
-  writeProfile profile filename
+startIPythonKernel = startKernel $ \profileFile -> ["python", "-m", "ipykernel", "-f", profileFile]
 
-  -- set JPY_PARENT_PID to shut up the kernel about its Ctrl-C behaviour
-  setEnv "JPY_PARENT_PID" "-1"
-
-  -- Start the kernel, and then give it a bit of time to start. If we don't give it some time to
-  -- start, then it is possible for it to miss our first message. In that case, this test suite just
-  -- spins forever...
-  proc <- spawnProcess "python" ["-m", "ipykernel", "-f", filename]
-  threadDelay $ 500 * 1000
-
-  return proc
+runIPython = runKernel startIPythonKernel
 
 testHandlerExceptions :: TestTree
 testHandlerExceptions = testCase "Client Handler Exceptions" $ do
@@ -79,23 +331,23 @@ testHandlerExceptions = testCase "Client Handler Exceptions" $ do
 
   -- ConnectRequest results in status updates, so erroring on the kernel output
   -- should raise an exception in the main thread.
-  raisesHandlerException $ runIPython handlerKernelOutputException $ const $
+  raisesHandlerException $ runIPython handlerKernelOutputException $ \_ _ ->
     sendClientRequest ConnectRequest
 
   -- ConnectRequest does not sent any stdin messages, so clients that error
   -- when handling stdin messages should not crash here.
-  runIPython handlerKernelRequestException $ const $
+  runIPython handlerKernelRequestException $ \_ _ ->
     sendClientRequest ConnectRequest
 
   -- This particular ExecuteRequest should reply with comm messages, and
   -- so a comm handler that raises an exception should cause the main thread to crash.
-  raisesHandlerException $ runIPython handlerCommException $ const $
+  raisesHandlerException $ runIPython handlerCommException $ \_ _ ->
     sendClientRequest $
       ExecuteRequest "import ipywidgets as widgets\nwidgets.FloatSlider()" defaultExecuteOptions
 
   -- This particular ExecuteRequest should reply with kernel requests for stdin, and
   -- so a kernel request handler that raises an exception should cause the main thread to crash.
-  raisesHandlerException $ runIPython handlerKernelRequestException $ const $
+  raisesHandlerException $ runIPython handlerKernelRequestException $ \_ _ ->
     sendClientRequest $
       ExecuteRequest "print(input())" defaultExecuteOptions { executeAllowStdin = True }
 
@@ -107,13 +359,6 @@ defaultClientCommHandler _ _ = return ()
 
 defaultKernelOutputHandler :: (Comm -> IO ()) -> KernelOutput -> IO ()
 defaultKernelOutputHandler _ _ = return ()
-
-runIPython :: ClientHandlers -> (KernelProfile -> Client a) -> IO a
-runIPython handlers action =
-  inTempDir $ \tmpDir ->
-    runClient Nothing Nothing handlers $ \profile -> do
-      proc <- liftIO $ startIPythonKernel profile
-      finally (action profile) $ liftIO $ terminateProcess proc
 
 testClientPortsTaken :: TestTree
 testClientPortsTaken = testCase "Client Ports Taken"  $
@@ -142,79 +387,10 @@ testClientPortsTaken = testCase "Client Ports Taken"  $
 
 -- Test that messages can be sent and received on the heartbeat socket.
 testClient :: TestTree
-testClient = testCaseSteps "Communicate with IPython Kernel" $ \step -> do
-  kernelOutputsVar <- newMVar []
-  commsVar <- newEmptyMVar
-  kernelRequestsVar <- newEmptyMVar
-  clientRepliesVar <- newEmptyMVar
-  let clientHandlers = ClientHandlers (kernelRequestHandler' clientRepliesVar kernelRequestsVar)
-                                      (commHandler' commsVar)
-                                      (kernelOutputHandler' kernelOutputsVar)
-
-  runIPython clientHandlers $ \profile -> do
-    -- Wait for the kernel to initialize. We know that the kernel is done initializing when it sends its
-    -- first response; however, sometimes we also get a "starting" status. Since later on we check for
-    -- equality of kernel outputs, we want to get rid of this timing inconsistencey immediately by just 
-    -- doing on preparation message.
-    liftIO $ step "Waiting for kernel to start..."
-    sendClientRequest ConnectRequest
-    liftIO $ do
-      waitForKernelIdle kernelOutputsVar
-      swapMVar kernelOutputsVar []
-
-    -- Acquire the current session number. Without this, we can't accurately test the history replies,
-    -- since they contain the session numbers. To acquire the session number, send an execute request followed
-    -- by a history request.
-    execReply <- sendClientRequest $ ExecuteRequest "3 + 3" defaultExecuteOptions
-    execCount <- case execReply of
-      ExecuteReply count _ -> return count
-      _ -> fail "Expected ExecuteReply for ExecuteRequest"
-    liftIO $ do
-      waitForKernelIdle kernelOutputsVar
-      swapMVar kernelOutputsVar []
-
-    histReply <- sendClientRequest $ HistoryRequest $ HistoryOptions False True $ HistoryTail 1
-    sessionNum <- case histReply of
-      HistoryReply items -> return $ maybe 1 historyItemSession (listToMaybe items)
-      _ -> fail "Expected HistoryReply for HistoryRequest"
-    liftIO $ waitForKernelIdle kernelOutputsVar
-    liftIO $ takeMVar kernelOutputsVar
-
-    liftIO $ step "Checking messages exchanges..."
-    forM_ (mkMessageExchanges sessionNum execCount profile) $ \exchange@MessageExchange{..} -> do
-      liftIO $ do
-        step $ "\t..." ++ exchangeName
-        putMVar kernelOutputsVar []
-        putMVar commsVar []
-        putMVar kernelRequestsVar []
-
-        void $ tryTakeMVar clientRepliesVar
-        putMVar clientRepliesVar exchangeKernelRequests
-
-      reply <- sendClientRequest exchangeRequest
-
-      liftIO $ do
-        waitForKernelIdle kernelOutputsVar
-        exchangeReply @=? reply
-
-        receivedComms <- takeMVar commsVar
-        exchangeComms @=? reverse receivedComms
-
-        receivedKernelRequests <- takeMVar kernelRequestsVar
-        map fst exchangeKernelRequests  @=? reverse receivedKernelRequests
-
-        receivedOutputs <- takeMVar kernelOutputsVar
-        exchangeKernelOutputs @=? reverse receivedOutputs
-
-waitForKernelIdle :: MVar [KernelOutput] -> IO ()
-waitForKernelIdle var = do
-  outputs <- readMVar var
-  unless (KernelStatusOutput KernelIdle `elem` outputs) $ do
-    threadDelay 100000
-    waitForKernelIdle var
-    
-mkMessageExchanges :: Int -> ExecutionCount -> KernelProfile -> [MessageExchange]
-mkMessageExchanges sessionNum execCount profile =
+testClient = testMessageExchange
+               "Communicate with IPython Kernel"
+               (return $ \prof -> ["python", "-m", "ipykernel", "-f", prof])
+               "3 + 3" $ \sessionNum execCount profile ->
   [ MessageExchange
     { exchangeName = "connect_request"
     , exchangeRequest = ConnectRequest
@@ -237,8 +413,8 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput "import sys\nprint(sys.version.split()[0])"
-                                  (execCount + 1)
+                              , ExecuteInputOutput (execCount + 1)
+                                  "import sys\nprint(sys.version.split()[0])"
                               , StreamOutput StreamStdout "3.5.0\n"
                               , kernelIdle
                               ]
@@ -250,7 +426,7 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput "3 + 3" (execCount + 2)
+                              , ExecuteInputOutput (execCount + 2) "3 + 3"
                               , ExecuteResultOutput (execCount + 2) $ displayPlain "6"
                               , kernelIdle
                               ]
@@ -261,7 +437,7 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeReply = ExecuteReply (execCount + 2) ExecuteOk
     , exchangeKernelRequests = []
     , exchangeComms = []
-    , exchangeKernelOutputs = [kernelBusy, ExecuteInputOutput "" (execCount + 3), kernelIdle]
+    , exchangeKernelOutputs = [kernelBusy, ExecuteInputOutput (execCount + 3) "", kernelIdle]
     }
   , MessageExchange
     { exchangeName = "execute_request (clear)"
@@ -271,9 +447,8 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput
+                              , ExecuteInputOutput (execCount + 3)
                                   "from IPython.display import clear_output\nclear_output()"
-                                  (execCount + 3)
                               , ClearOutput ClearImmediately
                               , kernelIdle
                               ]
@@ -353,9 +528,8 @@ mkMessageExchanges sessionNum execCount profile =
                       , CommMessage fakeUUID (object ["method" .= str "display"])
                       ]
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput
+                              , ExecuteInputOutput (execCount + 4)
                                   "import ipywidgets as widgets\nwidgets.FloatSlider()"
-                                  (execCount + 4)
                               , StreamOutput StreamStderr $
                                 T.unwords
                                   [ "Widget Javascript not detected. "
@@ -375,9 +549,8 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput
+                              , ExecuteInputOutput (execCount + 5)
                                   "from IPython.display import *\ndisplay(HTML('<b>Hi</b>'))"
-                                  (execCount + 5)
                               , DisplayDataOutput $ displayPlain
                                                       "<IPython.core.display.HTML object>" <> displayHtml
                                                                                                 "<b>Hi</b>"
@@ -395,7 +568,7 @@ mkMessageExchanges sessionNum execCount profile =
                                ]
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput "x = input('Hello')\nprint(x)\nx" (execCount + 6)
+                              , ExecuteInputOutput (execCount + 6) "x = input('Hello')\nprint(x)\nx"
                               , StreamOutput StreamStdout "stdin\n"
                               , ExecuteResultOutput (execCount + 6) $ displayPlain "'stdin'"
                               , kernelIdle
@@ -412,8 +585,8 @@ mkMessageExchanges sessionNum execCount profile =
                                ]
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
-                              , ExecuteInputOutput "import getpass\nprint(getpass.getpass('Hello'))"
-                                  (execCount + 7)
+                              , ExecuteInputOutput (execCount + 7)
+                                  "import getpass\nprint(getpass.getpass('Hello'))"
                               , StreamOutput StreamStdout "stdin\n"
                               , kernelIdle
                               ]
@@ -648,40 +821,10 @@ mkMessageExchanges sessionNum execCount profile =
     , exchangeKernelOutputs = [kernelBusy, ShutdownNotificationOutput Restart, kernelIdle]
     }
   ]
-  where
-    kernelIdle = KernelStatusOutput KernelIdle
-    kernelBusy = KernelStatusOutput KernelBusy
 
-    str :: String -> String
-    str = id
+kernelIdle, kernelBusy :: KernelOutput
+kernelIdle = KernelStatusOutput KernelIdle
+kernelBusy = KernelStatusOutput KernelBusy
 
-fakeUUID :: UUID.UUID
-fakeUUID = UUID.uuidFromString "fake"
-
-
-kernelRequestHandler' :: MVar [(KernelRequest, ClientReply)] -> MVar [KernelRequest] -> (Comm -> IO ()) -> KernelRequest -> IO ClientReply
-kernelRequestHandler' repliesVar var _ req = do
-  modifyMVar_ var $ return . (req :)
-  replies <- readMVar repliesVar
-  case lookup req replies of
-    Just reply -> return reply
-    Nothing -> fail "Could not find appropriate client reply"
-
-
-commHandler' :: MVar [Comm] -> (Comm -> IO ()) -> Comm -> IO ()
-commHandler' var _ comm = modifyMVar_ var $ return . (comm' :)
-  where
-    comm' =
-      case comm of
-        CommOpen _ val b c -> CommOpen fakeUUID (dropJSONKey "layout" val) b c
-        CommClose _ a -> CommClose fakeUUID a
-        CommMessage _ a -> CommMessage fakeUUID a
-
-    dropJSONKey key val =
-      case val of
-        Object o -> Object (HashMap.delete key o)
-        other -> other
-
-kernelOutputHandler' :: MVar [KernelOutput] -> (Comm -> IO ()) -> KernelOutput -> IO ()
-kernelOutputHandler' var _ out =
-  modifyMVar_ var $ return . (out :)
+str :: String -> String
+str = id

@@ -15,18 +15,23 @@ For user-facing documentation, please check out "Jupyter.Install" instead.
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Install.Internal where
 
-import           Control.Monad (forM_, void, unless, when)
-import           Data.Maybe (isJust)
+import           Control.Monad (forM_, void, unless, when, foldM)
+import           Data.Maybe (isJust, listToMaybe)
 import           System.Environment (getExecutablePath)
 import           System.Directory (findExecutable, getTemporaryDirectory, removeDirectoryRecursive,
-                                   createDirectoryIfMissing, copyFile, doesDirectoryExist, canonicalizePath)
+                                   createDirectoryIfMissing, copyFile, doesDirectoryExist,
+                                   canonicalizePath, doesFileExist)
 import           System.Process (readProcess)
 import           System.IO (withFile, IOMode(..))
 import           Text.Read (readMaybe)
 import           Control.Exception (Exception, IOException, catch, throwIO)
+import qualified Data.HashMap.Lazy as HashMap
+import qualified Data.Map as Map
 
-import           Data.Aeson ((.=), object, encode)
+import           Data.Aeson ((.=), object, encode, eitherDecode, FromJSON(..), Value(..), (.:))
+import           Data.Aeson.Types (Parser)
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.Char8 as CBS
 import qualified Data.Text as T
 import           Data.Text (Text)
 import           Data.Map (Map)
@@ -63,11 +68,11 @@ data InstallUser = InstallLocal   -- ^ Install this kernel just for this user.
   deriving (Eq, Ord, Show)
 
 -- | An exception type for expected exceptions during installation.
-newtype InstallException = InstallException Text
+newtype JupyterException = JupyterException Text
   deriving (Eq, Ord, Show)
 
--- | 'InstallException's can be thrown when an expected installation failure occurs.
-instance Exception InstallException
+-- | 'JupyterException's can be thrown when an expected installation failure occurs.
+instance Exception JupyterException
 
 -- | Version of Jupyter currently running, detected by running @jupyter --version@.
 --
@@ -106,16 +111,16 @@ installKernel installUser kernelspec = tryInstall `catch` handleInstallFailure
       installKernelspec installUser jupyterPath kernelspec
       return InstallSuccessful
 
-    handleInstallFailure :: InstallException -> IO InstallResult
-    handleInstallFailure (InstallException message) = return $ InstallFailed message
+    handleInstallFailure :: JupyterException -> IO InstallResult
+    handleInstallFailure (JupyterException message) = return $ InstallFailed message
 
--- | Throw an 'InstallException' with a given error message.
+-- | Throw a 'JupyterException' with a given error message.
 installFailed :: String -> IO a
-installFailed = throwIO . InstallException . T.pack
+installFailed = throwIO . JupyterException . T.pack
 
 -- | Determine the absolute path to an executable on the PATH.
 --
--- Throws an 'InstallException' if the the executable cannot be found.
+-- Throws a 'JupyterException' if the the executable cannot be found.
 which :: FilePath -> IO FilePath
 which cmd = do
   mPath <- findExecutable cmd
@@ -128,7 +133,7 @@ which cmd = do
 
 -- | Verify that a proper version of Jupyter is installed.
 --
--- Throws an 'InstallException' if @jupyter@ is not present, is an incompatible version, or
+-- Throws a 'JupyterException' if @jupyter@ is not present, is an incompatible version, or
 -- otherwise cannot be used with this library.
 verifyJupyterCommand :: FilePath -> IO ()
 verifyJupyterCommand jupyterPath = do
@@ -143,7 +148,7 @@ verifyJupyterCommand jupyterPath = do
 
 -- | Run a @jupyter@ subcommand with no standard input.
 --
--- Throws an 'InstallException' if the command cannot be run or returns a non-zero exit code.
+-- Throws a 'JupyterException' if the command cannot be run or returns a non-zero exit code.
 runJupyterCommand :: FilePath -> [String] -> IO String
 runJupyterCommand jupyterPath args = readProcess jupyterPath args "" `catch` handler
   where
@@ -206,7 +211,7 @@ prepareKernelspecDirectory kernelspec dir = do
 
 -- | Install a kernelspec using @jupyter kernelspec install@.
 --
--- Throws an 'InstallException' on failure.
+-- Throws a 'JupyterException' on failure.
 installKernelspec :: InstallUser -- ^ Whether this kernel should be installed with or without --user 
                   -> FilePath    -- ^ Path to the @jupyter@ executable
                   -> Kernelspec  -- ^ Kernelspec to install
@@ -250,3 +255,83 @@ parseVersion versionStr =
          [x]       -> JupyterVersion <$> x <*> pure 0 <*> pure 0
          _         -> Nothing
        else Nothing
+
+-- | Find the kernelspec for a kernel with a given language name.
+--
+-- If no such kernel exists, then 'Nothing' is returned. If an error occurs
+-- while searching for Jupyter kernels, a 'JupyterException' is thrown.
+findKernel :: Text -> IO (Maybe Kernelspec)
+findKernel language = 
+  listToMaybe . filter ((language ==) . kernelspecLanguage) <$> findKernels
+
+-- | Find all kernelspecs that the Jupyter installation is aware of,
+-- using the @jupyter kernelspec list@ command.
+--
+-- If an error occurs while searching for Jupyter kernels, a 'JupyterException' is thrown.
+findKernels :: IO [Kernelspec]
+findKernels = do
+  jupyterPath <- which "jupyter"
+  specs <- eitherDecode . CBS.pack <$> runJupyterCommand jupyterPath ["kernelspec", "list", "--json"]
+  case specs of
+    Left err -> throwIO $ JupyterException $ T.pack err
+    Right (Kernelspecs kernelspecs) -> mapM checkKernelspecFiles $ Map.elems kernelspecs
+
+
+-- | Kernelspecs can refer to files such as kernel.js and logo-64x64.png. Check whether the
+-- kernelspec refers to that file; if it does, check that the file exists. If the file doesn't
+-- exist, then remove it from the kernelspec.
+checkKernelspecFiles :: Kernelspec -> IO Kernelspec
+checkKernelspecFiles Kernelspec { .. } = do
+  let jsFile = kernelspecJsFile
+      logoFile = kernelspecLogoFile
+  kernelspecJsFile <- checkFile jsFile
+  kernelspecLogoFile <- checkFile logoFile
+  return Kernelspec { .. }
+
+  where
+    checkFile :: Maybe FilePath -> IO (Maybe FilePath)
+    checkFile Nothing = return Nothing
+    checkFile (Just file) = do
+      exists <- doesFileExist file
+      return $ if exists
+                 then Just file
+                 else Nothing
+
+newtype Kernelspecs = Kernelspecs (Map Text Kernelspec)
+
+instance FromJSON Kernelspecs where
+  parseJSON (Object outer) = do
+    inner <- outer .: "kernelspecs"
+    case inner of
+      Object innerObj ->
+        let items = HashMap.toList innerObj
+        in Kernelspecs <$> foldM accumKernelspecs mempty items
+      _ -> fail "Expecting object inside 'kernelspecs' key"
+  parseJSON _ = fail "Expecting object with 'kernelspecs' key"
+
+accumKernelspecs :: Map Text Kernelspec -> (Text, Value) -> Parser (Map Text Kernelspec)
+accumKernelspecs prev (name, val) = do
+  kernelspec <- parseKernelspec val
+  return $ Map.insert name kernelspec prev
+
+parseKernelspec :: Value -> Parser Kernelspec
+parseKernelspec v =
+  case v of
+    Object o -> do
+      dir <- o .: "resource_dir"
+      spec <- o .: "spec"
+      Kernelspec <$> spec .: "display_name"
+                 <*> spec .: "language"
+                 <*> (createCommand <$> spec .: "argv")
+                 <*> pure (Just $ dir ++ "/kernel.js")
+                 <*> pure (Just $ dir ++ "/logo-64x64.png")
+                 <*> spec .: "env"
+    _ -> fail "Expecting object for kernelspec"
+  where
+    createCommand :: [Text] -> FilePath -> FilePath -> [String]
+    createCommand argv exec0 connFile =
+      flip map argv $ \val ->
+        case val of
+          "{connection_file}" -> connFile
+          _ -> T.unpack val
+

@@ -168,8 +168,6 @@ testKernel = testCaseSteps "Simple Kernel" $ \step -> do
                      , CommInfoRequest Nothing
                      , CommInfoRequest (Just (TargetName "comm_target"))
                      , KernelInfoRequest
-                     , ShutdownRequest Restart
-                     , ShutdownRequest NoRestart
                      ]
 
 mkFreshTestHeader :: IsMessage v => v -> IO MessageHeader

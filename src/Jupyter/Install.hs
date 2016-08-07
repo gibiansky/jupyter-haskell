@@ -24,6 +24,10 @@ module Jupyter.Install (
   installKernel,
   InstallUser(..),
   InstallResult(..),
+
+  -- * Detecting Installed Kkernels
+  findKernel,
+  findKernels,
   ) where
 
 import Data.Text (Text)

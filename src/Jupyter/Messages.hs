@@ -1036,7 +1036,7 @@ data KernelOutput =
                   -- know what code is being executed at any given time, these messages contain a
                   -- re-broadcast of the code portion of an 'ExecuteRequest', along with the
                   -- 'ExecutionCount'.
-                   ExecuteInputOutput CodeBlock ExecutionCount
+                   ExecuteInputOutput ExecutionCount CodeBlock
                   |
                   -- | Results of an execution are published as an 'ExecuteResult'. These are
                   -- identical to @display_data@ ('DisplayDataOutput') messages, with the addition
@@ -1087,7 +1087,7 @@ instance IsMessage KernelOutput where
     case msgType of
       "stream" -> Just $ \o -> StreamOutput <$> o .: "name" <*> o .: "text"
       "display_data" -> Just $ \o -> DisplayDataOutput <$> parseDisplayData o
-      "execute_input" -> Just $ \o -> ExecuteInputOutput <$> o .: "code" <*> o .: "execution_count"
+      "execute_input" -> Just $ \o -> ExecuteInputOutput <$> o .: "execution_count" <*> o .: "code" 
       "execute_result" -> Just $ \o ->
         ExecuteResultOutput <$> o .: "execution_count" <*> parseDisplayData o
       "error" -> Just $ \o -> ExecuteErrorOutput <$> parseJSON (Object o)
@@ -1103,7 +1103,7 @@ instance ToJSON KernelOutput where
         StreamOutput stream text ->
           ["name" .= stream, "text" .= text]
         DisplayDataOutput displayData -> mimebundleFields displayData
-        ExecuteInputOutput code executionCount ->
+        ExecuteInputOutput executionCount code ->
           ["code" .= code, "execution_count" .= executionCount]
         ExecuteResultOutput executionCount displayData ->
           ("execution_count" .= executionCount) : mimebundleFields displayData
@@ -1113,6 +1113,8 @@ instance ToJSON KernelOutput where
           ["execution_state" .= status]
         ClearOutput wait ->
           ["wait" .= wait]
+        ShutdownNotificationOutput restart ->
+          ["restart" .= restart]
 
 -- | Output stream to write messages to.
 data Stream = StreamStdout -- ^ @stdout@

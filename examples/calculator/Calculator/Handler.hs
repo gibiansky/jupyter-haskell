@@ -115,11 +115,11 @@ printLatex expr =
   case expr of
     Lit i        -> show i
     Var c        -> [c]
-    Negate e     -> '-' : printText e
-    Add a b      -> concat ["(", printText a, " + ", printText b, ")"]
-    Multiply a b -> concat ["(", printText a, " \\cdot ", printText b, ")"]
-    Subtract a b -> concat ["(", printText a, " - ", printText b, ")"]
-    Divide a b   -> concat ["\\frac{", printText a, "}{", printText b, "}"]
+    Negate e     -> '-' : printLatex e
+    Add a b      -> concat ["(", printLatex a, " + ", printLatex b, ")"]
+    Multiply a b -> concat ["(", printLatex a, " \\cdot ", printLatex b, ")"]
+    Subtract a b -> concat ["(", printLatex a, " - ", printLatex b, ")"]
+    Divide a b   -> concat ["\\frac{", printLatex a, "}{", printLatex b, "}"]
 
 -- | List of symbols that should be part of autocompletions.
 autocompleteSymbols :: [Text]
@@ -150,6 +150,7 @@ requestHandler profile execCountVar callbacks req =
       -- For this simple kernel, ignore the execution options, as they do not apply
       -- to our simple kernel. Also, automatically increment the execution counter.
       modifyMVar execCountVar $ \execCount -> do
+        sendKernelOutput callbacks $ ExecuteInputOutput execCount code
         reply <- handleExecuteRequest execCount code callbacks
         return (execCount + 1, reply)
     InspectRequest code offset _ ->

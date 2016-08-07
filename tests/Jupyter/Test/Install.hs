@@ -86,11 +86,11 @@ testFindingJupyterExecutable = testCase "PATH searching" $
         createDirectoryIfMissing True prefix
 
         -- When the file doesn't exist it should not be found.
-        which "jupyter" `shouldThrow` (Proxy :: Proxy InstallException)
+        which "jupyter" `shouldThrow` (Proxy :: Proxy JupyterException)
 
         -- When the file is not executable it should not be found.
         writeFile path "#!/bin/bash\ntrue"
-        which "jupyter" `shouldThrow` (Proxy :: Proxy InstallException)
+        which "jupyter" `shouldThrow` (Proxy :: Proxy JupyterException)
 
         -- When the file is executable, it should be found, and be an absolute path
         -- that ultimately resolves to what we expect.
@@ -113,14 +113,14 @@ testJupyterVersionReading = testCase "jupyter --version parsing" $
 
       -- Version too low.
       writeMockJupyter "1.2.0"
-      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterException)
 
       -- Could not parse output.
       writeMockJupyter "..."
-      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterException)
 
       writeMockJupyter "asdf"
-      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy InstallException)
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterException)
 
       -- Works.
       writeMockJupyter "3.0.0"
