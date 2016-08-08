@@ -19,7 +19,7 @@ library
                        Jupyter.Client
                        Jupyter.ZeroMQ
                        Jupyter.Messages
-                       Jupyter.Messages.Metadata
+                       Jupyter.Messages.Internal
                        Jupyter.UUID
                        Jupyter.Install
                        Jupyter.Install.Internal

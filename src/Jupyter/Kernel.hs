@@ -7,9 +7,15 @@ Maintainer  : andrew.gibiansky@gmail.com
 Stability   : stable
 Portability : POSIX
 
-The 'Jupyter.Kernel' module is the core of the @jupyter-kernel@ package, and allows you to quickly and easily create Jupyter kernels.
+The 'Jupyter.Kernel' module is the core of the @jupyter@ package, and allows you to quickly 
+and easily create Jupyter kernels.
 
-The main entrypoint is the 'serve' function, which provides a type-safe implementation of the Jupyter messaging spec: Given a 'ClientRequestHandler' and a 'CommHandler', serve a Jupyter kernel.
+The main entrypoint is the 'serve' function, which provides a type-safe implementation of the Jupyter
+messaging spec: Given a 'ClientRequestHandler' and a 'CommHandler', serve a Jupyter kernel.
+
+More information about the client and kernel interfaces can be found on the @jupyter@
+<https://github.com/gibiansky/jupyter-haskell README>, and several example kernels may be found in 
+the <https://github.com/gibiansky/jupyter-haskell/tree/master/examples examples> directory.
 -}
 
 {-# LANGUAGE RecordWildCards #-}
@@ -23,37 +29,51 @@ module Jupyter.Kernel (
   ClientRequestHandler,
   simpleKernelInfo,
 
+  -- * Reading Kernel Profiles
+  KernelProfile(..),
+  readProfile,
+
   -- * Serving kernels
   serve,
   serveWithDynamicPorts,
-  KernelProfile(..),
-  readProfile,
   KernelCallbacks(..), 
   defaultClientRequestHandler,
   defaultCommHandler,
   ) where
 
+-- Imports from 'base'
+import           Control.Exception (bracket, AsyncException(..), catch, throwIO, finally)
 import           Control.Monad (forever)
-import           System.IO (hPutStrLn, stderr)
-import           Data.ByteString (ByteString)
-import           Data.Text (Text)
 import           System.Exit (exitSuccess)
+import           System.IO (hPutStrLn, stderr)
 
+-- Imports from 'bytestring'
+import           Data.ByteString (ByteString)
+
+-- Imports from 'text'
+import           Data.Text (Text)
+
+-- Imports from 'mtl'
 import           Control.Monad.IO.Class (MonadIO(..))
+
+-- Imports from 'monad-control'
 import           Control.Monad.Trans.Control (liftBaseWith)
 
-import           Control.Exception (bracket, AsyncException(..), catch, throwIO, finally, SomeException)
-import           Control.Concurrent.Async (link2, waitAny, cancel, Async)
+-- Imports from 'async'
+import           Control.Concurrent.Async (link2, waitAny, cancel)
 
+-- Imports from 'zeromq4-haskell'
 import           System.ZMQ4.Monadic (ZMQ, Socket, Rep, Router, Pub, async, receive, send)
 
+-- Imports from 'jupyter'
 import           Jupyter.Messages (KernelOutput, Comm, ClientRequest(..), KernelReply(..),
                                    pattern ExecuteOk, pattern InspectOk, pattern CompleteOk,
                                    CursorRange(..), CodeComplete(..), CodeOffset(..), ConnectInfo(..),
                                    KernelInfo(..), LanguageInfo(..), KernelOutput(..),
                                    KernelStatus(..), KernelRequest(..), ClientReply(..))
 import           Jupyter.ZeroMQ (withKernelSockets, KernelSockets(..), sendMessage, receiveMessage,
-                                 KernelProfile(..), readProfile, messagingError, mkReplyHeader)
+                                 KernelProfile(..), readProfile, messagingError, mkReplyHeader,
+                                 threadKilledHandler, readProfile)
 
 -- | Create the simplest possible 'KernelInfo'.
 --
@@ -62,6 +82,8 @@ import           Jupyter.ZeroMQ (withKernelSockets, KernelSockets(..), sendMessa
 --
 -- Mostly intended for use in tutorials and demonstrations; if publishing production kernels, make
 -- sure to use the full 'KernelInfo' constructor.
+--
+-- >>> let kernelInfo = simpleKernelInfo "python3"
 simpleKernelInfo :: Text -- ^ Kernel name, used for 'kernelImplementation' and 'languageName'.
                  -> KernelInfo
 simpleKernelInfo kernelName =
@@ -259,10 +281,6 @@ serveInternal mProfile profileHandler commHandler requestHandler =
       bracket (runInBase setupListeners)
               (mapM_ cancel)
               (fmap snd . waitAny)
-
-threadKilledHandler :: AsyncException -> IO ()
-threadKilledHandler ThreadKilled = return ()
-threadKilledHandler ex = throwIO ex
 
 -- | Heartbeat once.
 --

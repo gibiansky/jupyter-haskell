@@ -108,22 +108,29 @@ module Jupyter.Messages (
     TargetModule(..),
     ) where
 
-import           Data.Text (Text)
-import           Data.Map (Map)
-import qualified Data.Map as Map
-import           Data.Aeson (Value(..), Object, (.:), (.:?), (.=), object, FromJSON(..), ToJSON(..))
-import           Data.Aeson.Types (Parser)
+-- Imports from 'base'
+import           Control.Applicative ((<|>))
 import           Control.Monad (foldM)
 import           Data.Foldable (toList)
-import           Control.Applicative ((<|>))
-
 import           Data.Typeable (Typeable)
-import           GHC.Generics (Generic)
 import           GHC.Exts (IsString)
+import           GHC.Generics (Generic)
 
-import           Jupyter.Messages.Metadata (IsMessage(..))
-import qualified Jupyter.UUID as UUID
+-- Imports from 'aeson'
+import           Data.Aeson (Value(..), Object, (.:), (.:?), (.=), object, FromJSON(..), ToJSON(..))
+import           Data.Aeson.Types (Parser)
+
+-- Imports from 'text'
+import           Data.Text (Text)
+
+-- Imports from 'containers'
+import           Data.Map (Map)
+import qualified Data.Map as Map
+
+-- Imports from 'jupyter'
+import           Jupyter.Messages.Internal (IsMessage(..))
 import           Jupyter.UUID (UUID)
+import qualified Jupyter.UUID as UUID
 
 -- | Most communication from a client to a kernel is initiated by the client on the /shell/ socket.
 --

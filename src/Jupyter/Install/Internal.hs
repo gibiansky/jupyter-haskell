@@ -36,23 +36,33 @@ import qualified Data.Text as T
 import           Data.Text (Text)
 import           Data.Map (Map)
 
--- | A /kernelspec/ is a description of a kernel which tells the Jupyter command-line application how to install
--- the kernel and tells the frontends how to invoke the kernel (command line flags, environment, etc).
+-- | A /kernelspec/ is a description of a kernel which tells the Jupyter command-line application
+-- how to install the kernel and tells the frontends how to invoke the kernel (command line flags,
+-- environment, etc).
 --
--- More documentation about kernelspecs is located in the <http://jupyter-client.readthedocs.io/en/latest/kernels.html#kernelspecs official documentation>.
+-- More documentation about kernelspecs is located in the
+-- <http://jupyter-client.readthedocs.io/en/latest/kernels.html#kernelspecs official documentation>.
 data Kernelspec =
        Kernelspec
-         { kernelspecDisplayName :: Text -- ^ Name for the kernel to be shown in frontends, e.g. \"Haskell\".
-         , kernelspecLanguage :: Text    -- ^ Language name for the kernel, used to refer to this kernel (in command-line arguments, URLs, etc), e.g. "haskell".
-         , kernelspecCommand :: FilePath -> FilePath -> [String] -- ^ How to invoke the kernel. Given the path to the currently running executable and connection file, this function
-            -- should return the full command to invoke the kernel. Example:
-         --
-         -- > \exe connectionFile -> [exe, "kernel", "--debug", "--connection-file", connectionFile]
-         , kernelspecJsFile :: Maybe FilePath -- ^ (optional) path to a Javascript file (kernel.js) to provide to the Jupyter notebook.
+         { kernelspecDisplayName :: Text -- ^ Name for the kernel to be shown in frontends, e.g.
+                                         -- \"Haskell\".
+         , kernelspecLanguage :: Text    -- ^ Language name for the kernel, used to refer to this kernel
+                                         -- (in command-line arguments, URLs, etc), e.g. "haskell".
+         , kernelspecCommand :: FilePath -> FilePath -> [String]
+          -- ^ How to invoke the kernel. Given the path to the currently running executable
+           -- and connection file, this function should return the full command to invoke the
+           -- kernel. For example:
+           --
+           -- > \exe connectionFile -> [exe, "kernel", "--debug", "--connection-file", connectionFile]
+         , kernelspecJsFile :: Maybe FilePath -- ^ (optional) path to a Javascript file (kernel.js)
+                                              -- to provide to the Jupyter notebook.
          -- This file is loaded upon notebook startup.
-         , kernelspecLogoFile :: Maybe FilePath -- ^ (optional) path to a 64x64 PNG file to display as the kernel logo in the notebook.
-         , kernelspecEnv :: Map Text Text -- ^ Additional environment variables to set when invoking the kernel. If no additional
-         -- environment variables are required, pass @'Data.Map.fromList' []@ or 'Data.Monoid.mempty'.
+         , kernelspecLogoFile :: Maybe FilePath -- ^ (optional) path to a 64x64 PNG file to display
+                                                -- as the kernel logo in the notebook.
+         , kernelspecEnv :: Map Text Text -- ^ Additional environment variables to set when invoking
+                                          -- the kernel. If no additional environment variables are
+                                          -- required, pass @'Data.Map.fromList' []@ or
+                                          -- 'Data.Monoid.mempty'.
          }
 
 -- | Whether the installation was successful.
@@ -67,12 +77,13 @@ data InstallUser = InstallLocal   -- ^ Install this kernel just for this user.
                  | InstallGlobal  -- ^ Install this kernel globally.
   deriving (Eq, Ord, Show)
 
--- | An exception type for expected exceptions during installation.
-newtype JupyterException = JupyterException Text
+-- | An exception type for expected exceptions whenever the @jupyter kernelspec@ command is used.
+newtype JupyterKernelspecException = JupyterKernelspecException Text
   deriving (Eq, Ord, Show)
 
--- | 'JupyterException's can be thrown when an expected installation failure occurs.
-instance Exception JupyterException
+-- | 'JupyterKernelspecException's can be thrown when an expected failure occurs during @jupyter kernelspec@
+-- command invocation.
+instance Exception JupyterKernelspecException
 
 -- | Version of Jupyter currently running, detected by running @jupyter --version@.
 --
@@ -111,16 +122,16 @@ installKernel installUser kernelspec = tryInstall `catch` handleInstallFailure
       installKernelspec installUser jupyterPath kernelspec
       return InstallSuccessful
 
-    handleInstallFailure :: JupyterException -> IO InstallResult
-    handleInstallFailure (JupyterException message) = return $ InstallFailed message
+    handleInstallFailure :: JupyterKernelspecException -> IO InstallResult
+    handleInstallFailure (JupyterKernelspecException message) = return $ InstallFailed message
 
--- | Throw a 'JupyterException' with a given error message.
+-- | Throw a 'JupyterKernelspecException' with a given error message.
 installFailed :: String -> IO a
-installFailed = throwIO . JupyterException . T.pack
+installFailed = throwIO . JupyterKernelspecException . T.pack
 
 -- | Determine the absolute path to an executable on the PATH.
 --
--- Throws a 'JupyterException' if the the executable cannot be found.
+-- Throws a 'JupyterKernelspecException' if the the executable cannot be found.
 which :: FilePath -> IO FilePath
 which cmd = do
   mPath <- findExecutable cmd
@@ -133,7 +144,7 @@ which cmd = do
 
 -- | Verify that a proper version of Jupyter is installed.
 --
--- Throws a 'JupyterException' if @jupyter@ is not present, is an incompatible version, or
+-- Throws a 'JupyterKernelspecException' if @jupyter@ is not present, is an incompatible version, or
 -- otherwise cannot be used with this library.
 verifyJupyterCommand :: FilePath -> IO ()
 verifyJupyterCommand jupyterPath = do
@@ -148,7 +159,7 @@ verifyJupyterCommand jupyterPath = do
 
 -- | Run a @jupyter@ subcommand with no standard input.
 --
--- Throws a 'JupyterException' if the command cannot be run or returns a non-zero exit code.
+-- Throws a 'JupyterKernelspecException' if the command cannot be run or returns a non-zero exit code.
 runJupyterCommand :: FilePath -> [String] -> IO String
 runJupyterCommand jupyterPath args = readProcess jupyterPath args "" `catch` handler
   where
@@ -211,7 +222,7 @@ prepareKernelspecDirectory kernelspec dir = do
 
 -- | Install a kernelspec using @jupyter kernelspec install@.
 --
--- Throws a 'JupyterException' on failure.
+-- Throws a 'JupyterKernelspecException' on failure.
 installKernelspec :: InstallUser -- ^ Whether this kernel should be installed with or without --user 
                   -> FilePath    -- ^ Path to the @jupyter@ executable
                   -> Kernelspec  -- ^ Kernelspec to install
@@ -259,7 +270,7 @@ parseVersion versionStr =
 -- | Find the kernelspec for a kernel with a given language name.
 --
 -- If no such kernel exists, then 'Nothing' is returned. If an error occurs
--- while searching for Jupyter kernels, a 'JupyterException' is thrown.
+-- while searching for Jupyter kernels, a 'JupyterKernelspecException' is thrown.
 findKernel :: Text -> IO (Maybe Kernelspec)
 findKernel language = 
   listToMaybe . filter ((language ==) . kernelspecLanguage) <$> findKernels
@@ -267,13 +278,13 @@ findKernel language =
 -- | Find all kernelspecs that the Jupyter installation is aware of,
 -- using the @jupyter kernelspec list@ command.
 --
--- If an error occurs while searching for Jupyter kernels, a 'JupyterException' is thrown.
+-- If an error occurs while searching for Jupyter kernels, a 'JupyterKernelspecException' is thrown.
 findKernels :: IO [Kernelspec]
 findKernels = do
   jupyterPath <- which "jupyter"
   specs <- eitherDecode . CBS.pack <$> runJupyterCommand jupyterPath ["kernelspec", "list", "--json"]
   case specs of
-    Left err -> throwIO $ JupyterException $ T.pack err
+    Left err -> throwIO $ JupyterKernelspecException $ T.pack err
     Right (Kernelspecs kernelspecs) -> mapM checkKernelspecFiles $ Map.elems kernelspecs
 
 
@@ -281,12 +292,12 @@ findKernels = do
 -- kernelspec refers to that file; if it does, check that the file exists. If the file doesn't
 -- exist, then remove it from the kernelspec.
 checkKernelspecFiles :: Kernelspec -> IO Kernelspec
-checkKernelspecFiles Kernelspec { .. } = do
-  let jsFile = kernelspecJsFile
-      logoFile = kernelspecLogoFile
-  kernelspecJsFile <- checkFile jsFile
-  kernelspecLogoFile <- checkFile logoFile
-  return Kernelspec { .. }
+checkKernelspecFiles spec = do
+  let jsFile = kernelspecJsFile spec
+      logoFile = kernelspecLogoFile spec
+  kernelspecJsFile' <- checkFile jsFile
+  kernelspecLogoFile' <- checkFile logoFile
+  return spec { kernelspecJsFile = kernelspecJsFile', kernelspecLogoFile = kernelspecLogoFile' }
 
   where
     checkFile :: Maybe FilePath -> IO (Maybe FilePath)
@@ -329,9 +340,8 @@ parseKernelspec v =
     _ -> fail "Expecting object for kernelspec"
   where
     createCommand :: [Text] -> FilePath -> FilePath -> [String]
-    createCommand argv exec0 connFile =
+    createCommand argv _ connFile =
       flip map argv $ \val ->
         case val of
           "{connection_file}" -> connFile
           _ -> T.unpack val
-

@@ -1,61 +1,101 @@
+{-|
+Module      : Jupyter.ZeroMQ
+Description : Low-level communication primitives for Jupyter's ZeroMQ channels.
+Copyright   : (c) Andrew Gibiansky, 2016
+License     : MIT
+Maintainer  : andrew.gibiansky@gmail.com
+Stability   : stable
+Portability : POSIX
+
+This module provides a low-level interface to the Jupyter ZeroMQ sockets, message encoding, and
+message decoding. The primary interface consists of 'withKernelSockets' and 'withClientSockets', which
+create the sets of sockets needed to serve a kernel or run a client, and 'sendMessage' and 'receiveMessage',
+which, as the names may imply, send and receive messages (encoding and decoding them along the way) on the
+sockets.
+-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Jupyter.ZeroMQ (
-    withKernelSockets,
+    -- * Opening ZeroMQ Sockets
     KernelSockets(..),
-    withClientSockets,
+    withKernelSockets,
     ClientSockets(..),
-    sendMessage,
-    receiveMessage,
+    withClientSockets,
+
+    -- * Kernel Profiles
     KernelProfile(..),
     Port,
     IP,
     Transport(..),
     readProfile,
-    messagingError,
-    MessagingException(..),
+    writeProfile,
+
+    -- * Sending and Receiving messages
+    sendMessage,
+    receiveMessage,
     mkRequestHeader,
     mkReplyHeader,
+
+    -- * Miscellaneous utilities
+    threadKilledHandler,
+    messagingError,
+    MessagingException(..),
     ) where
 
-import           Data.Monoid ((<>))
-import           Data.ByteString (ByteString)
+-- Imports from 'base'
+import           Control.Exception (throwIO, Exception, AsyncException(ThreadKilled))
 import           Control.Monad (void, unless)
-import           Text.Read (readMaybe)
 import           Data.Char (isNumber)
-import qualified Data.Map as Map
-import           Control.Exception (throwIO, Exception)
-import           Control.Monad.Catch (catch)
-import           Data.Proxy (Proxy(..))
+import           Data.Monoid ((<>))
+import           Text.Read (readMaybe)
 
+-- Imports from 'bytestring'
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as CBS
+import qualified Data.ByteString.Lazy as LBS
+
+-- Imports from 'exceptions'
+import           Control.Monad.Catch (catch)
+
+-- Imports from 'aeson'
 import           Data.Aeson (FromJSON(..), Value(..), (.:), ToJSON(..), encode, decode, (.=), object,
                              eitherDecodeStrict')
 import           Data.Aeson.Types (parseEither)
+
+-- Imports from 'mtl'
 import           Control.Monad.IO.Class (MonadIO(..))
 
-import qualified Data.ByteString.Char8 as CBS
-import qualified Data.ByteString.Lazy as LBS
+-- Imports from 'text'
 import qualified Data.Text.Encoding as T
+
+-- Imports from 'SHA'
 import           Data.Digest.Pure.SHA as SHA
 
+-- Imports from 'zeromq4-haskell'
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
                                       Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
                                       Sender, lastEndpoint, bind, unbind, connect, subscribe,
                                       ZMQError, setIdentity, restrict)
 
-import           Jupyter.Messages.Metadata (MessageHeader(..), IsMessage(..), Username(..))
+-- Imports from 'jupyter'
+import           Jupyter.Messages.Internal (MessageHeader(..), IsMessage(..), Username(..))
 import qualified Jupyter.UUID as UUID
 
 
-parseMessage :: forall v. IsMessage v
-             => [ByteString]
-             -> ByteString
-             -> ByteString
-             -> ByteString
-             -> ByteString
+-- | Given all the bytes read from the wire, parse the Jupyter message into one of the @jupyter@
+-- package's many data types representing different types of Jupyter messages.
+--
+-- Return the 'MessageHeader' along with the message itself, assuming parsing succeeds, or returns
+-- an error message if it doesn't.
+parseMessage :: IsMessage v
+             => [ByteString] -- ^ List of ZeroMQ identifiers for this message.
+             -> ByteString   -- ^ The encoded JSON message header.
+             -> ByteString   -- ^ The encoded JSON parent message header (or @{}@ for no parent).
+             -> ByteString   -- ^ Any metadata associated with the message (as JSON).
+             -> ByteString   -- ^ The contents of the message itself, encoded as JSON.
              -> Either String (MessageHeader, v)
 parseMessage identifiers headerData parentHeaderData metadata content = do
   header <- parseHeader identifiers headerData parentHeaderData metadata
@@ -68,10 +108,10 @@ parseMessage identifiers headerData parentHeaderData metadata content = do
         _        -> Left $ "Expected object when parsing message, but got: " ++ show value
 
 -- | Attempt to parse a message header.
-parseHeader :: [ByteString]
-            -> ByteString
-            -> ByteString
-            -> ByteString
+parseHeader :: [ByteString]  -- ^ List of ZeroMQ identifiers for this message.
+            -> ByteString    -- ^ The encoded JSON message header.
+            -> ByteString    -- ^ The encoded JSON parent message header (or @{}@ for no parent).
+            -> ByteString    -- ^ Any metadata associated with the message (as JSON).
             -> Either String MessageHeader
 parseHeader identifiers headerData parentHeaderData metadata = do
   header <- eitherDecodeStrict' headerData
@@ -88,38 +128,52 @@ parseHeader identifiers headerData parentHeaderData metadata = do
 
   return MessageHeader { .. }
 
+-- | The collection of <http://zeromq.org/ ZeroMQ> sockets needed to communicate with Jupyter
+-- kernels on the <https://jupyter- Jupyter messaging wire protocol>. These sockets are to be used
+-- by a client communicating with a kernel.
+--
+-- Roles of different sockets are described
+-- <https://jupyter-client.readthedocs.io/en/latest/messaging.html#introduction here>.
 data ClientSockets z =
        ClientSockets
          { clientHeartbeatSocket :: Socket z Req
+         -- ^ The /heartbeat/ socket, which, for functioning kernels, will echo anything sent to it immediately.
+         -- Clients can use this socket to check if the kernel is still alive.
          , clientControlSocket :: Socket z Dealer
+         -- ^ The /control/ socket, optionally used to send 'ClientRequest' messages that deserve immediate
+         -- response (shutdown requests, etc), rather than long-running requests (execution).
          , clientShellSocket :: Socket z Dealer
+         -- ^ The /shell/ socket, used to send the majority of 'ClientRequest' messages (introspection,
+         -- completion, execution, etc) and their responses.
          , clientStdinSocket :: Socket z Dealer
+         -- ^ The /stdin/ socket, used for communication from a kernel to a single frontend; currently only
+         -- used for retrieving standard input from the user, hence the socket name.
          , clientIopubSocket :: Socket z Sub
+         -- ^ The /iopub/ socket, used for receiving 'KernelOutput's from the kernel.
          }
 
--- | The collection of <http://zeromq.org/ ZeroMQ> sockets needed to communicate with Jupyter on the
--- <https://jupyter- Jupyter messaging wire protocol>.
+-- | The collection of <http://zeromq.org/ ZeroMQ> sockets needed to communicate with Jupyter
+-- clients on the <https://jupyter- Jupyter messaging wire protocol>. These sockets are to be used
+-- by a kernel communicating with a client.
 --
 -- Roles of different sockets are described
 -- <https://jupyter-client.readthedocs.io/en/latest/messaging.html#introduction here>.
 data KernelSockets z =
        KernelSockets
-         { kernelHeartbeatSocket :: Socket z Rep  -- ^ The /heartbeat/ socket, which echoes anything sent to
-                                            -- it immediately and is used by frontends solely to
-                                            -- confirm that the kernel is still alive.
-         , kernelControlSocket :: Socket z Router -- ^ The /control/ socket, optionally used to send
-                                            -- 'ClientRequest' messages that deserve immediate
-                                            -- response (shutdown requests, etc), rather than
-                                            -- long-running requests (execution).
-         , kernelShellSocket :: Socket z Router   -- ^ The /shell/ socket, used to send the majority of
-                                            -- 'ClientRequest' messages (introspection, completion,
-                                            -- execution, etc) and their responses.
-         , kernelStdinSocket :: Socket z Router   -- ^ The /stdin/ socket, used for communication from a
-                                            -- kernel to a single frontend; currently only used for
-                                            -- retrieving standard input from the user, hence the
-                                            -- socket name.
-         , kernelIopubSocket :: Socket z Pub      -- ^ The /iopub/ socket, used for publishing 'KernelOutput's
-                                            -- to all frontends.
+         { kernelHeartbeatSocket :: Socket z Rep
+         -- ^ The /heartbeat/ socket, which echoes anything sent to it immediately and is used by frontends
+         -- solely to confirm that the kernel is still alive.
+         , kernelControlSocket :: Socket z Router
+         -- ^ The /control/ socket, optionally used to send 'ClientRequest' messages that deserve immediate
+         -- response (shutdown requests, etc), rather than long-running requests (execution).
+         , kernelShellSocket :: Socket z Router
+         -- ^ The /shell/ socket, used to send the majority of 'ClientRequest' messages (introspection,
+         -- completion, execution, etc) and their responses.
+         , kernelStdinSocket :: Socket z Router
+         -- ^ The /stdin/ socket, used for communication from a kernel to a single frontend; currently only
+         -- used for retrieving standard input from the user, hence the socket name.
+         , kernelIopubSocket :: Socket z Pub
+         -- ^ The /iopub/ socket, used for publishing 'KernelOutput's to all frontends.
          }
 
 -- | A TCP port, encoded as an integer.
@@ -147,6 +201,7 @@ instance ToJSON Transport where
 data MessagingException = MessagingException String 
   deriving (Eq, Ord, Show)
 
+-- | An 'Exception' instance allows 'MessagingException' to be thrown as an exception.
 instance Exception MessagingException
 
 -- | Throw a 'MessagingException' with a descriptive error message.
@@ -211,6 +266,7 @@ instance FromJSON KernelProfile where
 
   parseJSON _ = fail "Expecting object for parsing KernelProfile"
 
+-- | Instance to decode a 'KernelProfile' from connection file contents.
 instance ToJSON KernelProfile where
   toJSON KernelProfile { .. } =
     object
@@ -233,6 +289,11 @@ instance ToJSON KernelProfile where
 -- If the file contents cannot be parsed, 'Nothing' is returned.
 readProfile :: FilePath -> IO (Maybe KernelProfile)
 readProfile path = decode <$> LBS.readFile path
+
+-- | Write a 'KernelProfile' to a JSON file, which can be passed as the connection file to a
+-- starting kernel.
+writeProfile :: KernelProfile -> FilePath -> IO ()
+writeProfile profile path = LBS.writeFile path (encode profile) 
 
 -- | Create and bind all ZeroMQ sockets used for serving a Jupyter kernel. Store info about the
 -- created sockets in a 'KernelProfile', and then run a 'ZMQ' action, providing the used
@@ -338,6 +399,7 @@ connectSocket mProfile startPort accessor sock = do
   endpoint sock
 
   where
+    findOpenPort :: Int -> Int -> ZMQ z ()
     findOpenPort 0 _ = fail "fatal error (Jupyter.ZeroMQ): Could not find port to connect to."
     findOpenPort triesLeft tryPort =
       let handler :: ZMQError -> ZMQ z ()
@@ -475,3 +537,13 @@ sendMessage hmacKey sock header content = do
 -- Encode to a strict bytestring.
 encodeStrict :: ToJSON a => a -> ByteString
 encodeStrict = LBS.toStrict . encode
+
+-- | Handle an 'AsyncException': if the exception is 'ThreadKilled', then do nothing,
+-- otherwise, rethrow the exception.
+--
+-- This helper utility exists to gracefully shutdown infinite loops in which we listen on
+-- ZeroMQ sockets, and exists to stop 'ThreadKilled' exceptions from propagating back to
+-- the main thread (which, presumably, is the thread that killed the thread in question).
+threadKilledHandler :: AsyncException -> IO ()
+threadKilledHandler ThreadKilled = return ()
+threadKilledHandler ex = throwIO ex

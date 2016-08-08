@@ -1,11 +1,40 @@
--- | Description : UUID generator and data structure
---
--- Generate, parse, and pretty print UUIDs for use with Jupyter.
-module Jupyter.UUID (UUID, random, randoms, uuidToString, uuidFromString) where
+{-|
+Module      : Jupyter.UUID
+Description : UUID generator and type.
+Copyright   : (c) Andrew Gibiansky, 2016
+License     : MIT
+Maintainer  : andrew.gibiansky@gmail.com
+Stability   : stable
+Portability : POSIX
 
+Generate, parse, and pretty print UUIDs for use with Jupyter. 
+
+UUIDs are stored internally as just strings, rather than parsed UUIDs, because Jupyter cares about
+things like dashes and capitalization -- if they are not identical to the ones Jupyter send, Jupyter
+will not recognize them. Thus, we treat them as strings rather than UUIDs to be parsed to avoid
+modifying them in any way.
+-}
+module Jupyter.UUID (
+    -- * UUID data type and conversions
+    UUID,
+    uuidToString,
+    uuidFromString,
+
+    -- * Generating UUIDs
+    random,
+    randoms,
+    ) where
+
+-- Imports from 'base'
 import           Control.Monad (mzero, replicateM)
+
+-- Imports from 'aeson'
 import           Data.Aeson
+
+-- Imports from 'text'
 import           Data.Text (pack)
+
+-- Imports from 'uuid'
 import           Data.UUID.V4 (nextRandom)
 
 -- | A UUID (universally unique identifier).

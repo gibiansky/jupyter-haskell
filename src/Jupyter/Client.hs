@@ -1,58 +1,175 @@
+{-|
+Module      : Main
+Description : Client interface for Jupyter kernels.
+Copyright   : (c) Andrew Gibiansky, 2016
+License     : MIT
+Maintainer  : andrew.gibiansky@gmail.com
+Stability   : stable
+Portability : POSIX
+
+This module serves as the primary interface to Jupyter clients, as provided by the @jupyter@ library.
+
+Communication with clients is done in the 'Client' monad, which is a thin wrapper over 'IO' which 
+maintains a small bit of required state to identify a running kernel and the sockets on which to 
+communicate with it. The initial state and connection information is supplied when you use 'runClient',
+which requires connection information and the 'Client' action to run.
+
+The 'runClient' function also requires a set of 'ClientHandlers', which are callbacks that get called
+when the kernel sends any sort of message to the client ('KernelRequest's, 'KernelOutput's, and 'Comm's).
+
+These functions can be used quite succinctly to communicate with external clients. For example, the
+following code connects to an installed Python kernel (the @ipykernel@ package msut be installed):
+
+@
+import Jupyter.Client
+
+main :: IO ()
+main = 
+  'runClient' Nothing Nothing handlers $ \profile -> do
+    -- The `profile` provided is a generated 'KernelProfile'
+    -- that the client will connect to. Start an IPython kernel
+    -- that listens on that profile.
+    liftIO $ do
+      'writeProfile' profile "profile.json"
+      'System.Process.spawnProcess' "python" ["-m", "ipykernel", "-f", "profile.json"]
+
+    -- Find out info about the kernel by sending it a kernel info request.
+    reply <- 'sendClientRequest' 'KernelInfoRequest'
+    liftIO $ print reply
+@
+
+More information about the client and kernel interfaces can be found on the @jupyter@ <https://github.com/gibiansky/jupyter-haskell README>.
+-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
-module Jupyter.Client (Client, runClient, sendClientRequest, sendClientComm, ClientHandlers(..), writeProfile) where
+module Jupyter.Client (
+    -- * Communicating with Clients
+    Client,
+    runClient,
+    sendClientRequest,
+    sendClientComm,
+    ClientHandlers(..),
 
-import           Data.Maybe (fromMaybe)
-import           Data.ByteString (ByteString)
+    -- * Writing Connection Files
+    writeProfile,
+    ) where
+
+-- Imports from 'base'
+import           Control.Exception (throwIO, bracket, catch, AsyncException(ThreadKilled))
 import           Control.Monad (forever)
+import           Data.Maybe (fromMaybe)
 
-import           Control.Monad.Reader (MonadReader, ReaderT, runReaderT, ask)
-import           Control.Monad.IO.Class (MonadIO(..))
-import           Control.Monad.Trans.Control (liftBaseWith)
-import           Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
-import           Data.Aeson (encode)
+-- Imports from 'bytestring'
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
-import           Control.Exception (throwIO, SomeException, bracket, catch,
-                                    AsyncException(ThreadKilled))
 
+-- Imports from 'aeson'
+import           Data.Aeson (encode)
+--
+-- Imports from 'async'
 import           Control.Concurrent.Async (async, link, link2, cancel, Async)
 
-import           Jupyter.ZeroMQ (ClientSockets(..), withClientSockets, sendMessage, receiveMessage,
-                                 messagingError, mkRequestHeader, KernelProfile(..), mkReplyHeader)
+-- Imports from 'mtl'
+import           Control.Monad.Reader (MonadReader, ReaderT, runReaderT, ask)
+
+-- Imports from 'transformers'
+import           Control.Monad.IO.Class (MonadIO(..))
+
+-- Imports from 'exceptions'
+import           Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
+
+-- Imports from 'monad-control'
+import           Control.Monad.Trans.Control (liftBaseWith)
+
+-- Imports from 'zeromq4-haskell'
+import           System.ZMQ4.Monadic (ZMQ)
+
+-- Imports from 'jupyter'
 import           Jupyter.Messages (Comm, KernelRequest, ClientReply, KernelOutput, ClientRequest,
                                    KernelReply)
 import           Jupyter.Messages.Metadata (Username)
+import           Jupyter.ZeroMQ (ClientSockets(..), withClientSockets, sendMessage, receiveMessage,
+                                 messagingError, mkRequestHeader, KernelProfile(..), mkReplyHeader,
+                                 threadKilledHandler, writeProfile)
 import qualified Jupyter.UUID as UUID
 
-import           System.ZMQ4.Monadic (ZMQ)
-
-writeProfile :: KernelProfile -> FilePath -> IO ()
-writeProfile profile path = LBS.writeFile path (encode profile) 
-
+-- | All the state required to maintain a connection to the client.
 data ClientState = forall z.
        ClientState
-         { clientSockets :: ClientSockets z
-         , clientSessionUsername :: Username
-         , clientSessionUuid :: UUID.UUID
-         , clientSignatureKey :: ByteString
+         { clientSockets :: ClientSockets z  -- ^ A set of sockets used to communicate with the kernel.
+         , clientSessionUsername :: Username -- ^ A username to use in message headers.
+         , clientSessionUuid :: UUID.UUID    -- ^ A session UUID to use in message headers.
+         , clientSignatureKey :: ByteString  -- ^ An HMAC signature key to hash message signature with.
          , clientLiftZMQ :: forall a m. MonadIO m => ZMQ z a -> m a
+           -- ^ A helper function to convert from ZMQ actions to any IO monad. 
          }
 
+-- | A client action, representing a computation in which communication happens with a Jupyter
+-- client.
+--
+-- Use 'sendClientRequest' and 'sendComm' to construct 'Client' values, the 'Monad' interface to
+-- manipulate them, and 'runClient' to supply all needed connection info and run the action.
 newtype Client a = Client { unClient :: ReaderT ClientState IO a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadReader ClientState, MonadThrow, MonadCatch, MonadMask)
 
+-- | A set of callbacks for the client. These callbacks get called when the client receives any
+-- message from the kernel.
+--
+-- One callback exists per message type that the clients can receive. Each callbacks can also send
+-- 'Comm' messages to kernel, and receive a function of type @'Comm' -> IO ()@ that sends a single
+-- 'Comm' message to the kernel.
 data ClientHandlers =
        ClientHandlers
          { kernelRequestHandler :: (Comm -> IO ()) -> KernelRequest -> IO ClientReply
+           -- ^ A callback for handling 'KernelRequest's. A 'KernelRequest' is sent from a 
+           -- kernel to just one client, and that client must generate a 'ClientReply' with 
+           -- the corresponding constructor. 
+           --
+           -- The handler is passed a function @'Comm' -> IO ()@ which may be used to send 'Comm' messages
+           -- back to the client that sent the message.
          , commHandler :: (Comm -> IO ()) -> Comm -> IO ()
+           -- ^ A callback for handling 'Comm' messages from the kernel. 'Comm' messages may be handled in
+           -- any way, and 'defaultClientCommHandler' may be used as a 'Comm' handler that simply does nothing.
+           --
+           -- The handler is passed a function @'Comm' -> IO ()@ which may be used to send 'Comm' messages
+           -- back to the client that sent the message.
          , kernelOutputHandler :: (Comm -> IO ()) -> KernelOutput -> IO ()
+           -- ^ A callback for handling 'KernelOutput's. 'KernelOutput' messages are the primary
+           -- way for a kernel to publish outputs, and are sent to all connected frontends.
+           --
+           -- The handler is passed a function @'Comm' -> IO ()@ which may be used to send 'Comm' messages
+           -- back to the client that sent the message.
          }
 
-runClient :: Maybe KernelProfile -> Maybe Username -> ClientHandlers -> (KernelProfile -> Client a) -> IO a
+-- | Run a 'Client' action in 'IO'.
+--
+-- This function sets up ZeroMQ sockets on which it can connect to a kernel; if no 'KernelProfile'
+-- is provided, it generates a fresh 'KernelProfile' which contains information about the ports and
+-- transport protocols which it expects the kernel to connect with. It guarantees that the ports it
+-- chooses are open – that is, that no kernel is currently connected to those ports.
+--
+-- The generated 'KernelProfile' is passed to the user-provided @'KernelProfile' -> 'Client' a@
+-- callback, which may use functions such as 'sentClientRequest' to communicate with the kernel. If
+-- the kernel sends messages to the client, they are handled with the callbacks provided in the
+-- 'ClientHandlers' record.
+runClient :: Maybe KernelProfile -- ^ Optionally, a 'KernelProfile' to connect to. If no
+                                 -- 'KernelProfile' is provided, one is generated on the fly.
+                                 -- However, if a 'KernelProfile' /is/ provided, and connecting to
+                                 -- the specified ports fails, an exception is thrown.
+          -> Maybe Username -- ^ Optionally, a username to use when sending messages to the client.
+                            -- If no username is provided, a default one is used.
+          -> ClientHandlers -- ^ A record containing handlers for messages the kernel sends to the
+                            -- client.
+          -> (KernelProfile -> Client a) -- ^ Provided with the 'KernelProfile' that was being used
+                                         -- (either a freshly generated one or the one passed in by
+                                         -- the user), generate a 'Client' action. This action is
+                                         -- then run, handling all the ZeroMQ communication in the
+                                         -- background.
+          -> IO a
 runClient mProfile mUser clientHandlers client =
   withClientSockets mProfile $ \profile sockets ->
     liftBaseWith $ \runInBase -> do
@@ -66,7 +183,8 @@ runClient mProfile mUser clientHandlers client =
             , clientLiftZMQ = liftIO . runInBase
             }
 
-      let setupListeners = do
+      let setupListeners :: IO (Async (), Async ())
+          setupListeners = do
             async1 <- listenStdin clientState clientHandlers
             async2 <- listenIopub clientState clientHandlers
 
@@ -84,10 +202,36 @@ runClient mProfile mUser clientHandlers client =
               (\(async1, async2) -> cancel async1 >> cancel async2)
               (const $ runReaderT (unClient $ client profile) clientState)
 
-threadKilledHandler :: AsyncException -> IO ()
-threadKilledHandler ThreadKilled = return ()
-threadKilledHandler ex = throwIO ex
+-- | Send a 'ClientRequest' to the kernel. Wait for the kernel to reply with a 'KernelReply',
+-- blocking until it does so.
+sendClientRequest :: ClientRequest -- ^ The request to send to the connected kernel.
+                  -> Client KernelReply
+sendClientRequest req = do
+  ClientState { .. } <- ask
+  header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername req
+  clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header req
+  received <- clientLiftZMQ $ receiveMessage (clientShellSocket clientSockets)
 
+  case received of
+    Left err ->
+      -- There's no way to recover from this, so just die.
+      messagingError "Jupyter.Client" $
+        "Unexpected failure parsing KernelReply message: " ++ err
+    Right (_, message) -> return message
+
+-- | Send a 'Comm' message to the kernel. The kernel is not obligated to respond in any way, so do
+-- not block, but return immediately upon sending the message.
+sendClientComm :: Comm -> Client ()
+sendClientComm comm = do
+  ClientState { .. } <- ask
+  header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername  comm
+  clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header comm
+
+-- | Spawn a new thread that forever listens on the /iopub/ socket, parsing the messages
+-- as they come in and calling the appropriate callback from the 'ClientHandlers' record.
+-- 
+-- If the thread receives a 'ThreadKilled' exception, it will die silently, without letting
+-- the exception propagate.
 listenIopub :: ClientState -> ClientHandlers -> IO (Async ())
 listenIopub ClientState { .. } handlers = async $ catch (forever respondIopub) threadKilledHandler
   where
@@ -111,6 +255,11 @@ listenIopub ClientState { .. } handlers = async $ catch (forever respondIopub) t
             Left comm    -> commHandler handlers sendReplyComm comm
             Right output -> kernelOutputHandler handlers sendReplyComm output
 
+-- | Spawn a new thread that forever listens on the /stdin/ socket, parsing the messages
+-- as they come in and calling the appropriate callback from the 'ClientHandlers' record.
+-- 
+-- If the thread receives a 'ThreadKilled' exception, it will die silently, without letting
+-- the exception propagate.
 listenStdin :: ClientState -> ClientHandlers -> IO (Async ())
 listenStdin ClientState{..} handlers = async $ catch (forever respondStdin) threadKilledHandler
   where
@@ -128,23 +277,3 @@ listenStdin ClientState{..} handlers = async $ catch (forever respondStdin) thre
           reply <- kernelRequestHandler handlers sendReplyComm message
           replyHeader <- mkReplyHeader header reply
           clientLiftZMQ $ sendMessage clientSignatureKey (clientStdinSocket clientSockets) replyHeader reply
-
-sendClientRequest :: ClientRequest -> Client KernelReply
-sendClientRequest req = do
-  ClientState { .. } <- ask
-  header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername req
-  clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header req
-  received <- clientLiftZMQ $ receiveMessage (clientShellSocket clientSockets)
-
-  case received of
-    Left err ->
-      -- There's no way to recover from this, so just die.
-      messagingError "Jupyter.Client" $
-        "Unexpected failure parsing KernelReply message: " ++ err
-    Right (_, message) -> return message
-
-sendClientComm :: Comm -> Client ()
-sendClientComm comm = do
-  ClientState { .. } <- ask
-  header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername  comm
-  clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header comm

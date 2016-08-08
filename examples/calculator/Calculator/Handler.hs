@@ -7,8 +7,8 @@ Maintainer  : andrew.gibiansky@gmail.com
 Stability   : stable
 Portability : POSIX
 
-This module implements the main request handler (ClientRequestHandler) for the demo Calculator
-kernel that comes with the `jupyter` package.
+This module implements the main request handler ('ClientRequestHandler') for the demo Calculator
+kernel that comes with the @jupyter@ package.
 
 The Calculator kernel implements a very simple language, represented by the following AST:
 
@@ -33,7 +33,7 @@ calculator can do with the expressions are the constructors of @Statement@:
 The kernel features implemented by this kernel include code execution, autocompletion of 
 constructor names, and inspection of constructor names. To simplify the code, parsing is omitted,
 and instead the entire language syntax is simply Haskell expressions, so that we can use the
-derived Read parsers.
+derived 'Read' parsers.
 
 -}
 {-# LANGUAGE RecordWildCards #-}
@@ -41,13 +41,17 @@ derived Read parsers.
 {-# LANGUAGE PatternSynonyms #-}
 module Calculator.Handler (requestHandler) where
 
+-- Imports from 'base'
+import           Control.Concurrent (MVar, modifyMVar)
 import           Data.List (nub)
+import           Data.Monoid ((<>))
 import           Text.Read (readMaybe)
+
+-- Imports from 'text'
 import           Data.Text (Text)
 import qualified Data.Text as T
-import           Data.Monoid ((<>))
-import           Control.Concurrent (MVar, modifyMVar)
 
+-- Imports from 'jupyter'
 import           Jupyter.Kernel (defaultClientRequestHandler, KernelProfile, KernelCallbacks(..))
 import           Jupyter.Messages (ClientRequest(..), KernelReply(..), KernelInfo(..),
                                    LanguageInfo(..), HelpLink(..), CodeBlock(..), CodeOffset(..),
@@ -150,7 +154,10 @@ requestHandler profile execCountVar callbacks req =
       -- For this simple kernel, ignore the execution options, as they do not apply
       -- to our simple kernel. Also, automatically increment the execution counter.
       modifyMVar execCountVar $ \execCount -> do
+        -- Kernels are responsible for broadcasting any execution request code blocks they receive
+        -- to all connected frontends via kernel outputs.
         sendKernelOutput callbacks $ ExecuteInputOutput execCount code
+
         reply <- handleExecuteRequest execCount code callbacks
         return (execCount + 1, reply)
     InspectRequest code offset _ ->
@@ -184,6 +191,11 @@ requestHandler profile execCountVar callbacks req =
         }
       }
 
+-- | Given a block of code and a cursor offset in the code, tokenize the code and extract the token
+-- immediately preceeding the cursor. A token is defined a contiguous set of alphanumeric
+-- characters.
+--
+-- >>> findPreceedingToken "xyz (Hello)" 9 == "Hell"
 findPreceedingToken :: Text -> Int -> Text
 findPreceedingToken code offset =
   let beforeCursor = T.take offset code
@@ -191,6 +203,7 @@ findPreceedingToken code offset =
       token = T.takeWhileEnd (`elem` allowedSymbolChars) beforeCursor
   in token
 
+-- | Generate a 'KernelReply' for an 'ExecuteRequest', sending any necessary outputs in the process.
 handleExecuteRequest :: ExecutionCount -> CodeBlock -> KernelCallbacks -> IO KernelReply
 handleExecuteRequest execCount (CodeBlock code) KernelCallbacks { .. } =
   case parse code of
@@ -219,6 +232,7 @@ handleExecuteRequest execCount (CodeBlock code) KernelCallbacks { .. } =
   where
     reply = return . ExecuteReply execCount
 
+-- | Generate a 'KernelReply' for an 'InspectRequest'.
 handleInspectRequest :: CodeBlock -> CodeOffset -> IO KernelReply
 handleInspectRequest (CodeBlock code) (CodeOffset offset) =
   let token = findPreceedingToken code offset

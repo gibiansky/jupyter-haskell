@@ -1,14 +1,33 @@
+{-|
+Module      : Main
+Description : Main module for a basic bare-minimum Jupyter kernel created using the @jupyter@ library.
+Copyright   : (c) Andrew Gibiansky, 2016
+License     : MIT
+Maintainer  : andrew.gibiansky@gmail.com
+Stability   : stable
+Portability : POSIX
+
+This module is the Main module for @kernel-stdin@, a bare-minimum Jupyter kernel which uses the
+@stdin@ channel (with 'KernelRequest's), created using the @jupyter@ library. It is intended to
+demo the bare minimum amount of code required to create a Jupyter kernel which simulates using
+a standard input channel.
+-}
+
 {-# Language OverloadedStrings #-}
 {-# Language PatternSynonyms #-}
 module Main(main) where
 
+-- Imports from 'base'
+import           Control.Monad (when)
 import           System.Environment (getArgs)
 import           System.Exit (exitFailure)
 import           System.IO (stderr)
-import           Control.Monad (when)
-import qualified Data.Text.IO as T
-import           Data.Text (Text)
 
+-- Imports from 'text'
+import           Data.Text (Text)
+import qualified Data.Text.IO as T
+
+-- Imports from 'jupyter'
 import           Jupyter.Install (installKernel, simpleKernelspec, InstallUser(..), InstallResult(..),
                                   Kernelspec)
 import           Jupyter.Kernel (readProfile, simpleKernelInfo, serve, defaultCommHandler,

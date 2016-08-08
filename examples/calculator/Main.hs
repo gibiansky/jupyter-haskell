@@ -1,16 +1,35 @@
+{-|
+Module      : Main
+Description : Main module for a stdin-using Jupyter kernel created using the @jupyter@ library.
+Copyright   : (c) Andrew Gibiansky, 2016
+License     : MIT
+Maintainer  : andrew.gibiansky@gmail.com
+Stability   : stable
+Portability : POSIX
+
+This module is the Main module for @kernel-calculator@, a Jupyter kernel which implements a simple
+calculator language using the @jupyter@ library. It is intended to demonstrate a full yet basic kernel,
+one which implements execution, inspection, completion, as well as the basic informational requests.
+-}
+
 {-# Language OverloadedStrings #-}
 module Main(main) where
 
+-- Imports from 'base'
+import           Control.Concurrent (newMVar)
 import           System.Environment (getArgs)
 import           System.Exit (exitFailure)
 import           System.IO (stderr)
-import qualified Data.Text.IO as T
-import           Control.Concurrent (newMVar)
 
+-- Imports from 'text'
+import qualified Data.Text.IO as T
+
+-- Imports from 'jupyter'
 import           Jupyter.Install (installKernel, simpleKernelspec, InstallUser(..), InstallResult(..),
                                   Kernelspec)
 import           Jupyter.Kernel (readProfile, serve, defaultCommHandler)
 
+-- Imports from 'kernel-calculator'
 import           Calculator.Handler (requestHandler)
 
 -- | In `main`, support two commands:
@@ -48,5 +67,8 @@ runInstall =
 runKernel :: FilePath -> IO ()
 runKernel profilePath = do
   Just profile <- readProfile profilePath
+
+  -- Keep track of the current execution using an MVar. In general, kernel state (when it exists)
+  -- often needs to be kept in some sort of temporary mutable state.
   execCountVar <- newMVar 1
   serve profile defaultCommHandler $ requestHandler profile execCountVar
