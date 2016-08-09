@@ -22,7 +22,7 @@ module Jupyter.Test.MessageExchange (
     startKernel,
     fakeUUID,
     testMessageExchange,
-    runKernel,
+    runKernelAndClient,
     ) where
 
 -- Imports from 'base'
@@ -86,13 +86,31 @@ data MessageExchange =
          }
   deriving (Eq, Show)
 
-startKernel :: (FilePath -> [String]) -> KernelProfile -> IO ProcessHandle
+-- | Start an external-process kernel.
+--
+-- First, write the provided profile to a randomly named JSON file. Then, pass the path to this
+-- connection file to the provided function, which should return the command that should be used to
+-- start the kernel. Return the 'ProcessHandle' for the kernel process.
+--
+-- For example, given a profile @kernelProfile@, the IPython kernel would be started as
+--
+-- >     startKernel (\connFile -> ["python", "-m", "ipykernel", "-f", connFile]) kernelProfile
+--
+-- It is recommended that this be run in a temporary directory that is deleted afterward, so that
+-- this does not litter the user's path with JSON connection files.
+startKernel :: (FilePath -> [String]) -- ^ Function to generate kernel command given JSON connection
+                                      -- file
+            -> KernelProfile -- ^ Kernel profile to write to the connection file
+            -> IO ProcessHandle -- ^ Handle to the spawned kernel process
 startKernel mkCmd profile = do
+  -- Write a randomly-named profile JSON file. These are randomly named to avoid the possibility of
+  -- accidentally passing an old connection file to a newly spawned kernel.
   uuid <- UUID.uuidToString <$> UUID.random
   let filename = "profile-" ++ uuid ++ ".json"
   writeProfile profile filename
 
-  -- set JPY_PARENT_PID to shut up the kernel about its Ctrl-C behaviour
+  -- Set JPY_PARENT_PID to shut up the kernel about its Ctrl-C behaviour (this is mostly for the
+  -- IPython kernel).
   setEnv "JPY_PARENT_PID" "-1"
 
   -- Start the kernel, and then give it a bit of time to start. If we don't give it some time to
@@ -105,12 +123,43 @@ startKernel mkCmd profile = do
       threadDelay $ 500 * 1000
       return proc
 
-testMessageExchange :: String
+-- | Run a kernel and a client connected to that kernel (in a temporary directory).
+--
+-- This function starts a client, uses the generated kernel profile to start an external kernel
+-- process, connects to that kernel and communicates with it as indicated by a 'Client' action, and
+-- then ensures that the external process is shutdown before exiting.
+runKernelAndClient :: (KernelProfile -> IO ProcessHandle) -- ^ Function to start external kernel
+                   -> ClientHandlers -- ^ Client handlers for messages received from the kernel
+                   -> (KernelProfile -> ProcessHandle -> Client a) -- ^ Client action to run
+                   -> IO a
+runKernelAndClient start handlers action =
+  inTempDir $ \_ -> runClient Nothing Nothing handlers $ \profile -> do
+    proc <- liftIO $ start profile
+    finally (action profile proc) $ liftIO $ terminateProcess proc
+
+-- | Use the 'MessageExchange' data type to generate a test case for a test suite.
+--
+-- The generated test suite starts a kernel, acquires some basic information about it, sets up a
+-- client that talks to the kernel, and plays through the 'MessageExchange's provided by the user.
+-- All interactions between the client and the kernel are recorded and verified against the
+-- 'MessageExchange's.
+testMessageExchange :: String -- ^ Name for the test case
                     -> IO (FilePath -> [String])
+                    -- ^ IO action that generates a function, which, if given the path to the
+                    -- connection file, returns the full command to run. This is allowed to be
+                    -- dynamically generated so that it can use 'findKernel' to locate external
+                    -- kernels Jupyter knows about.
                     -> CodeBlock
+                    -- ^ A valid block of code accepted by the kernel, used to establish
+                    -- the execution counter and session number.
                     -> (Int -> ExecutionCount -> KernelProfile -> [MessageExchange])
+                    -- ^ A function to generate the all desired message exchanges, given the
+                    -- session number in progress (for history requests), the previous execution
+                    -- request, and the profile that was connected to.
                     -> TestTree
 testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCaseSteps name $ \step -> do
+  -- All communication from kernel to client is recorded in MVars. Allocate those MVars
+  -- and create the handlers that write to those MVars.
   kernelOutputsVar <- newMVar []
   commsVar <- newEmptyMVar
   kernelRequestsVar <- newEmptyMVar
@@ -120,7 +169,7 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
                                       (exchangeKernelOutputHandler kernelOutputsVar)
 
   mk <- mkKernelCommand
-  runKernel (startKernel mk) clientHandlers $ \profile proc -> do
+  runKernelAndClient (startKernel mk) clientHandlers $ \profile proc -> do
     -- Wait for the kernel to initialize. We know that the kernel is done initializing when it sends its
     -- first response; however, sometimes we also get a "starting" status. Since later on we check for
     -- equality of kernel outputs, we want to get rid of this timing inconsistencey immediately by just 
@@ -175,6 +224,9 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
         receivedOutputs <- takeMVar kernelOutputsVar
         exchangeKernelOutputs @=? reverse receivedOutputs
 
+        -- In the case of message exchanges that end in a shutdown message, the kernel is
+        -- responsible for shutting itself down after it sends the shutdown reply. Test that
+        -- this happens, and fail if the kernel process hasn't terminated after some time.
         case exchangeReply of
           ShutdownReply{} -> do
             threadDelay $ 500 * 1000
@@ -184,6 +236,11 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
               _ -> return ()
           _ -> return ()
 
+-- | Wait for the kernel to send a 'KernelIdle' status update.
+--
+-- This function polls the given 'MVar', waiting for the contained list to have a 'KernelIdle'
+-- status update. If this doesn't happen within a fixed but long timeout (1 second or so), an
+-- exception is raised, as it is likely indicative of a deadlock.
 waitForKernelIdle :: MVar [KernelOutput] -> IO ()
 waitForKernelIdle var = do
   res <- timeout 1000000 wait
@@ -192,19 +249,35 @@ waitForKernelIdle var = do
     Nothing -> fail "Timed out in waitForKernelIdle: deadlock?"
 
   where
+    -- Poll the MVar until it has the KernelIdle in it.
     wait = do
       outputs <- readMVar var
       unless (KernelStatusOutput KernelIdle `elem` outputs) $ do
         threadDelay 100000
         waitForKernelIdle var
 
+-- | A fake UUID that replaces all UUIDs in 'Comm' messages.
+--
+-- This is necessary because kernels generate UUIDs randomly, so we cannot use equality to test
+-- them, unless we replace all UUIDs with fake ones. This is the fake UUID that UUIDs from the
+-- kernels get replaced with.
 fakeUUID :: UUID.UUID
 fakeUUID = UUID.uuidFromString "fake"
 
+-- | A handler for the 'kernelRequestHandler' field of 'ClientHandlers'.
+--
+-- This handler listens for kernel requests, and, upon a kernel request, stores it in a list in an
+-- MVar, and then looks up a response to this kernel request and replies with it.
+--
+-- This allows for scripted interactions between clients and kernels to include /stdin/ channel requests.
 exchangeKernelRequestHandler :: MVar [(KernelRequest, ClientReply)]
+                             -- ^ Variable holding request / response pairs; response is looked up here.
                              -> MVar [KernelRequest]
+                             -- ^ Variable to store the received kernel request in.
                              -> (Comm -> IO ())
+                             -- ^ (unused) callback to send 'Comm' messages to the kernel
                              -> KernelRequest
+                             -- ^ Received kernel request
                              -> IO ClientReply
 exchangeKernelRequestHandler repliesVar var _ req = do
   modifyMVar_ var $ return . (req :)
@@ -214,6 +287,14 @@ exchangeKernelRequestHandler repliesVar var _ req = do
     Nothing    -> fail "Could not find appropriate client reply"
 
 
+-- | A handler for the 'commHandler' field of 'ClientHandlers'.
+--
+-- This handler listens for comm messages and stores them into a mutable variable. All 'Comm'
+-- messages have a UUID, which is replaced by 'fakeUUID'. In addition, any known fields that are
+-- non-deterministic are dropped from the data. (For instance, 'layout' is dropped from IPython
+-- widget messages.)
+--
+-- This function is not meant to be incredibly reusable.
 exchangeCommHandler :: MVar [Comm] -> (Comm -> IO ()) -> Comm -> IO ()
 exchangeCommHandler var _ comm = modifyMVar_ var $ return . (comm' :)
   where
@@ -228,13 +309,9 @@ exchangeCommHandler var _ comm = modifyMVar_ var $ return . (comm' :)
         Object o -> Object (HashMap.delete key o)
         other -> other
 
+-- | A handler for the 'kernelOutputHandler' field of 'ClientHandlers'.
+--
+-- This handler listens for 'KernelOutput' messages and stores them into a mutable variable.
 exchangeKernelOutputHandler :: MVar [KernelOutput] -> (Comm -> IO ()) -> KernelOutput -> IO ()
 exchangeKernelOutputHandler var _ out =
   modifyMVar_ var $ return . (out :)
-
-runKernel :: (KernelProfile -> IO ProcessHandle) -> ClientHandlers -> (KernelProfile -> ProcessHandle -> Client a) -> IO a
-runKernel start handlers action =
-  inTempDir $ \_ ->
-    runClient Nothing Nothing handlers $ \profile -> do
-      proc <- liftIO $ start profile
-      finally (action profile proc) $ liftIO $ terminateProcess proc

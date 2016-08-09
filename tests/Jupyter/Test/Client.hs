@@ -345,7 +345,7 @@ testHandlerExceptions = testCase "Client Handler Exceptions" $ do
       ExecuteRequest "print(input())" defaultExecuteOptions { executeAllowStdin = True }
 
   where
-    runIPython = runKernel startIPythonKernel
+    runIPython = runKernelAndClient startIPythonKernel
     raisesHandlerException io = io `shouldThrow` [HandlerException]
 
 defaultClientCommHandler :: (Comm -> IO ()) -> Comm -> IO ()
