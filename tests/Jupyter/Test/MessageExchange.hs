@@ -1,56 +1,88 @@
+{-|
+Module      : Jupyter.Test.MessageExchange
+Description : Client interface for Jupyter kernels.
+Copyright   : (c) Andrew Gibiansky, 2016
+License     : MIT
+Maintainer  : andrew.gibiansky@gmail.com
+Stability   : stable
+Portability : POSIX
+
+This module serves as one mechanism of testing @jupyter@'s Client functionality, as well as kernels 
+included with this project.
+
+This module allows defining a list of 'MessageExchange' values, which indicate a complete message exchange
+that should happen between a client and a kernel. The 'testMessageExchange' function then takes the list of
+exchanges, runs them using the 'Client' interface, and verifies that all replies (and generated kernel
+requests and outputs) match the expected ones.
+-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Jupyter.Test.MessageExchange where
+module Jupyter.Test.MessageExchange (
+    MessageExchange(..),
+    startKernel,
+    fakeUUID,
+    testMessageExchange,
+    runKernel,
+    ) where
 
-import           Control.Concurrent (newMVar, swapMVar, newEmptyMVar, MVar, forkIO, putMVar, takeMVar,
-                                     tryTakeMVar, readMVar, modifyMVar_, threadDelay, tryReadMVar)
-import           Control.Concurrent.Async (link, async)
-import           System.Environment (setEnv)
-import           Control.Monad.IO.Class (liftIO)
+-- Imports from 'base'
+import           Control.Concurrent (newMVar, swapMVar, newEmptyMVar, MVar, putMVar, takeMVar,
+                                     readMVar, modifyMVar_, threadDelay, tryTakeMVar)
 import           Control.Monad (forM_, unless, void)
-import           Control.Monad.Catch (finally)
-import           Control.Exception (SomeException, Exception, throwIO, bracket)
-import qualified Data.Map as Map
-import qualified Data.HashMap.Strict as HashMap
-import           Data.Monoid ((<>))
 import           Data.Maybe (listToMaybe)
-
-import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertFailure, assertBool)
-
-import           Data.ByteString (ByteString)
-import qualified Data.Text as T
-import qualified Data.ByteString.Lazy as LBS
-import           Data.Aeson (encode, ToJSON(..), object, (.=))
-import           Data.Aeson.Types (Value(..))
-import           System.Process (spawnProcess, terminateProcess, ProcessHandle, getProcessExitCode)
-
-
-import           System.ZMQ4.Monadic (socket, Req(..), Dealer(..), send, receive, bind, connect, ZMQ,
-                                      Socket, SocketType, runZMQ)
-
-import           Jupyter.ZeroMQ
-import           Jupyter.Kernel
-import           Jupyter.Client
-import           Jupyter.Messages
-import           Jupyter.Install
-import           Jupyter.Messages.Metadata
-import qualified Jupyter.UUID as UUID
-
-import           Utils (inTempDir, connectedSocket, shouldThrow, HandlerException(..))
-
+import           System.Environment (setEnv)
 import           System.Timeout (timeout)
 
+-- Imports from 'transformers'
+import           Control.Monad.IO.Class (liftIO)
 
+-- Imports from 'exceptions'
+import           Control.Monad.Catch (finally)
 
+-- Imports from 'unordered-containers'
+import qualified Data.HashMap.Strict as HashMap
+
+-- Imports from 'tasty'
+import           Test.Tasty (TestTree)
+
+-- Imports from 'tasty-hunit'
+import           Test.Tasty.HUnit (testCaseSteps, (@=?), assertFailure)
+
+-- Imports from 'aeson'
+import           Data.Aeson.Types (Value(..))
+
+-- Imports from 'process'
+import           System.Process (spawnProcess, terminateProcess, ProcessHandle, getProcessExitCode)
+
+-- Imports from 'jupyter'
+import           Jupyter.Client
+import           Jupyter.Kernel
+import           Jupyter.Messages
+import qualified Jupyter.UUID as UUID
+
+import           Jupyter.Test.Utils (inTempDir)
+
+-- | A data type representing an exchange of messages between a client and a kernel.
+--
+-- Given a list of 'MessageExchange's, this module can run the communication and check that all
+-- requests, outputs, and replies match what was specified.
+--
+-- This currently does not support sending 'Comm' messages as part of the exchange, but does support
+-- receiving them.
 data MessageExchange =
        MessageExchange
          { exchangeName :: String
+         -- ^ Name for the message exchange (to show in errors and test outputs)
          , exchangeRequest :: ClientRequest
+         -- ^ The 'ClientRequest' that initiates the exchange
          , exchangeReply :: KernelReply
+         -- ^ The 'KernelReply' that is returned
          , exchangeKernelRequests :: [(KernelRequest, ClientReply)]
+         -- ^ The 'KernelRequest's that are sent to the client, with a reply for each one
          , exchangeComms :: [Comm]
+         -- ^ The 'Comm' messages that are sent to the client
          , exchangeKernelOutputs :: [KernelOutput]
+         -- ^ The 'KernelOutput' messages that are sent to the client
          }
   deriving (Eq, Show)
 
@@ -94,10 +126,10 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
     -- equality of kernel outputs, we want to get rid of this timing inconsistencey immediately by just 
     -- doing on preparation message.
     liftIO $ step "Waiting for kernel to start..."
-    sendClientRequest ConnectRequest
+    void $ sendClientRequest ConnectRequest
     liftIO $ do
       waitForKernelIdle kernelOutputsVar
-      swapMVar kernelOutputsVar []
+      void $ swapMVar kernelOutputsVar []
 
     -- Acquire the current session number. Without this, we can't accurately test the history replies,
     -- since they contain the session numbers. To acquire the session number, send an execute request followed
@@ -108,17 +140,17 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
       _ -> fail "Expected ExecuteReply for ExecuteRequest"
     liftIO $ do
       waitForKernelIdle kernelOutputsVar
-      swapMVar kernelOutputsVar []
+      void $ swapMVar kernelOutputsVar []
 
     histReply <- sendClientRequest $ HistoryRequest $ HistoryOptions False True $ HistoryTail 1
     sessionNum <- case histReply of
       HistoryReply items -> return $ maybe 1 historyItemSession (listToMaybe items)
       _ -> fail "Expected HistoryReply for HistoryRequest"
     liftIO $ waitForKernelIdle kernelOutputsVar
-    liftIO $ takeMVar kernelOutputsVar
+    void $ liftIO $ takeMVar kernelOutputsVar
 
     liftIO $ step "Checking messages exchanges..."
-    forM_ (mkMessageExchanges sessionNum execCount profile) $ \exchange@MessageExchange{..} -> do
+    forM_ (mkMessageExchanges sessionNum execCount profile) $ \MessageExchange{..} -> do
       liftIO $ do
         step $ "\t..." ++ exchangeName
         putMVar kernelOutputsVar []
@@ -202,7 +234,7 @@ exchangeKernelOutputHandler var _ out =
 
 runKernel :: (KernelProfile -> IO ProcessHandle) -> ClientHandlers -> (KernelProfile -> ProcessHandle -> Client a) -> IO a
 runKernel start handlers action =
-  inTempDir $ \tmpDir ->
+  inTempDir $ \_ ->
     runClient Nothing Nothing handlers $ \profile -> do
       proc <- liftIO $ start profile
       finally (action profile proc) $ liftIO $ terminateProcess proc

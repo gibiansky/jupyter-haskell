@@ -1,44 +1,38 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Test.Client (clientTests) where
 
-import           Control.Concurrent (newMVar, swapMVar, newEmptyMVar, MVar, forkIO, putMVar, takeMVar,
-                                     tryTakeMVar, readMVar, modifyMVar_, threadDelay, tryReadMVar)
-import           Control.Concurrent.Async (link, async)
-import           System.Environment (setEnv)
-import           Control.Monad.IO.Class (liftIO)
-import           Control.Monad (forM_, unless, void)
-import           Control.Monad.Catch (finally)
-import           Control.Exception (SomeException, Exception, throwIO, bracket)
-import qualified Data.Map as Map
-import qualified Data.HashMap.Strict as HashMap
+-- Imports from 'base'
+import           Control.Exception (throwIO, bracket)
+import           Control.Monad (forM_, void)
 import           Data.Monoid ((<>))
-import           Data.Maybe (listToMaybe)
 
+-- Imports from 'transformers'
+import           Control.Monad.IO.Class (liftIO)
+
+-- Imports from 'tasty'
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertFailure, assertBool)
 
-import           Data.ByteString (ByteString)
-import qualified Data.Text as T
+-- Imports from 'tasty-hunit'
+import           Test.Tasty.HUnit (testCase, (@=?), assertBool)
+
+-- Imports from 'text'
 import           Data.Text (Text)
-import qualified Data.ByteString.Lazy as LBS
-import           Data.Aeson (encode, ToJSON(..), object, (.=))
-import           Data.Aeson.Types (Value(..))
-import           System.Process (spawnProcess, terminateProcess, ProcessHandle)
+import qualified Data.Text as T
 
+-- Imports from 'aeson'
+import           Data.Aeson (ToJSON(..), object, (.=))
 
-import           System.ZMQ4.Monadic (socket, Req(..), Dealer(..), send, receive, bind, connect, ZMQ,
-                                      Socket, SocketType, runZMQ)
+-- Imports from 'process'
+import           System.Process (terminateProcess, ProcessHandle)
 
-import           Jupyter.ZeroMQ
-import           Jupyter.Kernel
+-- Imports from 'jupyter'
 import           Jupyter.Client
-import           Jupyter.Messages
 import           Jupyter.Install
-import           Jupyter.Messages.Metadata
-import qualified Jupyter.UUID as UUID
+import           Jupyter.Kernel
+import           Jupyter.Messages
 
 import           Jupyter.Test.MessageExchange
-import           Utils (inTempDir, connectedSocket, shouldThrow, HandlerException(..))
+import           Jupyter.Test.Utils (inTempDir, shouldThrow, HandlerException(..))
 
 clientTests :: TestTree
 clientTests = testGroup "Client Tests"
@@ -71,7 +65,7 @@ testFindingKernelspecs = testCase "Finding Kernelspecs" $ do
 testBasic :: TestTree
 testBasic = 
   testMessageExchange "Basic Kernel" (commandFromKernelspec "basic") "" $
-    \sessionNum execCount profile ->
+    \_ _ profile ->
       [ MessageExchange
         { exchangeName = "execute_request"
         , exchangeRequest = ExecuteRequest "some input" defaultExecuteOptions
@@ -143,7 +137,7 @@ defaultMessageExchange name profile =
 testStdin :: TestTree
 testStdin =
   testMessageExchange "Stdin Kernel" (commandFromKernelspec "stdin") "skip" $
-    \sessionNum execCount profile ->
+    \_ _ profile ->
       [ MessageExchange
         { exchangeName = "execute_request (input)"
         , exchangeRequest = ExecuteRequest "prompt"
@@ -197,7 +191,7 @@ testStdin =
 testCalculator :: TestTree
 testCalculator =
   testMessageExchange "Calculator Kernel" (commandFromKernelspec "calculator") "Lit 5" $
-    \sessionNum execCount profile ->
+    \_ execCount profile ->
       [ MessageExchange
         { exchangeName = "connect_request"
         , exchangeRequest = ConnectRequest
@@ -319,7 +313,6 @@ commandFromKernelspec name = do
 startIPythonKernel :: KernelProfile -> IO ProcessHandle
 startIPythonKernel = startKernel $ \profileFile -> ["python", "-m", "ipykernel", "-f", profileFile]
 
-runIPython = runKernel startIPythonKernel
 
 testHandlerExceptions :: TestTree
 testHandlerExceptions = testCase "Client Handler Exceptions" $ do
@@ -336,7 +329,7 @@ testHandlerExceptions = testCase "Client Handler Exceptions" $ do
 
   -- ConnectRequest does not sent any stdin messages, so clients that error
   -- when handling stdin messages should not crash here.
-  runIPython handlerKernelRequestException $ \_ _ ->
+  void $ runIPython handlerKernelRequestException $ \_ _ ->
     sendClientRequest ConnectRequest
 
   -- This particular ExecuteRequest should reply with comm messages, and
@@ -352,6 +345,7 @@ testHandlerExceptions = testCase "Client Handler Exceptions" $ do
       ExecuteRequest "print(input())" defaultExecuteOptions { executeAllowStdin = True }
 
   where
+    runIPython = runKernel startIPythonKernel
     raisesHandlerException io = io `shouldThrow` [HandlerException]
 
 defaultClientCommHandler :: (Comm -> IO ()) -> Comm -> IO ()

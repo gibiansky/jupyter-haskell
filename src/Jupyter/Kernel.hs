@@ -42,7 +42,7 @@ module Jupyter.Kernel (
   ) where
 
 -- Imports from 'base'
-import           Control.Exception (bracket, AsyncException(..), catch, throwIO, finally)
+import           Control.Exception (bracket, catch, finally)
 import           Control.Monad (forever)
 import           System.Exit (exitSuccess)
 import           System.IO (hPutStrLn, stderr)

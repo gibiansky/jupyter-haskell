@@ -2,32 +2,44 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Test.Install (installTests) where
 
-import           Data.Monoid (mempty)
+-- Imports from 'base'
+import           Control.Monad (forM_)
 import           Data.List (isInfixOf)
-import           Control.Monad (forM_, (=<<))
-import           System.Environment (setEnv, lookupEnv)
-import           Control.Exception (catch, Exception)
+import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy(..))
-import           System.Directory (setPermissions, getPermissions, Permissions(..), canonicalizePath,
-                                   getDirectoryContents, createDirectoryIfMissing, removeFile,
-                                   doesFileExist)
-import Data.Maybe (fromMaybe)
+import           System.Environment (setEnv, lookupEnv)
 import           System.IO (stderr, stdout)
+
+-- Imports from 'directory'
+import           System.Directory (setPermissions, getPermissions, Permissions(..), canonicalizePath,
+                                   createDirectoryIfMissing, removeFile, doesFileExist)
+
+-- Imports from 'bytestring'
 import qualified Data.ByteString.Char8 as CBS
-import qualified Data.Text as T
 
-import           System.IO.Extra (withTempDir)
-import           Control.Exception.Extra (try_, bracket)
-
-import           System.IO.Silently (hCapture_)
-
+-- Imports from 'aeson'
 import           Data.Aeson (decodeStrict, Value)
 
+-- Imports from 'text'
+import qualified Data.Text as T
+
+-- Imports from 'extra'
+import           Control.Exception.Extra (bracket)
+import           System.IO.Extra (withTempDir)
+
+-- Imports from 'silently'
+import           System.IO.Silently (hCapture_)
+
+-- Imports from 'tasty'
 import           Test.Tasty (TestTree, testGroup)
+
+-- Imports from 'tasty-hunit'
 import           Test.Tasty.HUnit (testCase, (@=?), assertFailure, assertBool)
 
-import           Jupyter.Install.Internal as I
-import           Utils (shouldThrow, inTempDir)
+-- Imports from 'jupyter'
+import           Jupyter.Install.Internal
+import           Jupyter.Test.Utils (shouldThrow, inTempDir)
+import qualified Jupyter.Install.Internal as I
 
 installTests :: TestTree
 installTests = testGroup "Install Tests"
@@ -86,11 +98,11 @@ testFindingJupyterExecutable = testCase "PATH searching" $
         createDirectoryIfMissing True prefix
 
         -- When the file doesn't exist it should not be found.
-        which "jupyter" `shouldThrow` (Proxy :: Proxy JupyterException)
+        which "jupyter" `shouldThrow` (Proxy :: Proxy JupyterKernelspecException)
 
         -- When the file is not executable it should not be found.
         writeFile path "#!/bin/bash\ntrue"
-        which "jupyter" `shouldThrow` (Proxy :: Proxy JupyterException)
+        which "jupyter" `shouldThrow` (Proxy :: Proxy JupyterKernelspecException)
 
         -- When the file is executable, it should be found, and be an absolute path
         -- that ultimately resolves to what we expect.
@@ -104,7 +116,7 @@ testFindingJupyterExecutable = testCase "PATH searching" $
 
 testJupyterVersionReading :: TestTree
 testJupyterVersionReading = testCase "jupyter --version parsing" $
-  inTempDir $ \tmp ->
+  inTempDir $ \_ ->
     -- Set up a jupyter executable that outputs what we expect.
     withPath  "." $ do
       writeMockJupyter ""
@@ -113,14 +125,14 @@ testJupyterVersionReading = testCase "jupyter --version parsing" $
 
       -- Version too low.
       writeMockJupyter "1.2.0"
-      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterException)
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterKernelspecException)
 
       -- Could not parse output.
       writeMockJupyter "..."
-      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterException)
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterKernelspecException)
 
       writeMockJupyter "asdf"
-      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterException)
+      verifyJupyterCommand path `shouldThrow` (Proxy :: Proxy JupyterKernelspecException)
 
       -- Works.
       writeMockJupyter "3.0.0"
@@ -144,7 +156,7 @@ writeMockJupyter' stdoutOut stderrOut errCode =
 
 testStderrIsUntouched :: TestTree
 testStderrIsUntouched = testCase "stderr is piped through" $
-  inTempDir $ \tmp ->
+  inTempDir $ \_ ->
     -- Set up a jupyter executable that outputs something to stderr.
     withPath  "." $ do
       let msg = "An error"
@@ -215,14 +227,14 @@ testEndToEndInstall = testCase "installs end-to-end" $
       writeFile "jupyter" $ jupyterScript True
       setExecutable "jupyter"
 
-      result <- installKernel InstallLocal kernelspec
-      case result of
+      result1 <- installKernel InstallLocal kernelspec
+      case result1 of
         InstallFailed msg -> assertFailure $ "Failed to install kernelspec: " ++ T.unpack msg
         _                 -> return ()
 
       writeFile "jupyter" $ jupyterScript False
-      result <- installKernel InstallGlobal kernelspec
-      case result of
+      result2 <- installKernel InstallGlobal kernelspec
+      case result2 of
         InstallFailed msg -> assertFailure $ "Failed to install kernelspec: " ++ T.unpack msg
         _                 -> return ()
   where

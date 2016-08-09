@@ -195,6 +195,12 @@ instance FromJSON Transport where
 instance ToJSON Transport where
   toJSON TCP = "tcp"
 
+-- | Convert a 'Transport' to a 'String' representing the protocol, to be used as the first part of an address.
+--
+-- >>> transportToProtocolString TCP == "tcp"
+transportToProtocolString :: Transport -> String
+transportToProtocolString TCP = "tcp"
+
 -- | Exception to throw when the messaging protocol is not being observed.
 --
 -- See 'messagingError'.
@@ -387,10 +393,45 @@ withClientSockets mProfile callback = runZMQ $ do
 
   callback profile ClientSockets { .. }
 
-extractAddress :: Maybe KernelProfile -> (KernelProfile -> Int) -> String
-extractAddress mProfile accessor = "tcp://127.0.0.1:" ++ maybe "*" (show . accessor) mProfile
+-- | Compute the address to bind a socket to, given the 'KernelProfile', using the provided tranport
+-- mechanism, IP, and port. If no 'KernelProfile' is provided (and 'Nothing' is passed), then return
+-- the default address to bind to.
+--
+-- This default address has no explicit port, but rather uses @*@, as in @tcp://127.0.0.1:*@, and so
+-- cannot be used with ZeroMQ 'connect' (only with 'bind').
+extractAddress :: Maybe KernelProfile    -- ^ Optional kernel profile to get address info from
+               -> (KernelProfile -> Port) -- ^ Given a kernel profile, get the port to use,e.g.
+                                          -- 'profileIopubPort'
+               -> String                 -- ^ An address string, e.g. @tcp://127.0.0.1:8283@
+extractAddress mProfile accessor =
+  concat
+    [ maybe "tcp" (transportToProtocolString . profileTransport) mProfile
+    , "://"
+    , maybe "127.0.0.1" profileIp mProfile
+    , ":"
+    , maybe "*" (show . accessor) mProfile
+    ]
 
-connectSocket :: forall z t. Maybe KernelProfile -> Port -> (KernelProfile -> Int) -> Socket z t -> ZMQ z Int
+-- | Connect the provided socket to a port.
+--
+-- The port to connect to is determined as follows:
+--
+-- 1. If a 'KernelProfile' is provided, use the given @'KernelProfile' -> 'Port'@ accessor to compute
+-- the port that the socket should bind to, and use it (along with the transport mechanism and IP)
+-- to generate an address to connect to. If connecting to this address fails, an exception is
+-- raised.
+--
+-- 2. If no 'KernelProfile' is provided, attempt to bind to the provided default 'Port'.
+--
+-- 3. If binding to the default 'Port' fails, increment the port by one, and try again. Repeat this
+-- until either it succeeds, or until a fixed number of tries has been attempted.
+--
+-- Returns the port to which the socket was connected.
+connectSocket :: forall z t. Maybe KernelProfile -- ^ Optional 'KernelProfile'
+              -> Port -- ^ Default port to try, if no 'KernelProfile' provided
+              -> (KernelProfile -> Port) -- ^ Accessor function to get desired port from profile
+              -> Socket z t -- ^ Socket to connect
+              -> ZMQ z Port -- ^ Returns port to which socket connected
 connectSocket mProfile startPort accessor sock = do
   case mProfile of
     Just _  -> connect sock (extractAddress mProfile accessor)
@@ -399,6 +440,8 @@ connectSocket mProfile startPort accessor sock = do
   endpoint sock
 
   where
+    -- Try binding to a port. If it fails, try the next one (up to a fixed limit).
+    -- Any ZMQ error is treated as a retriable failure, regardless of the error code or message.
     findOpenPort :: Int -> Int -> ZMQ z ()
     findOpenPort 0 _ = fail "fatal error (Jupyter.ZeroMQ): Could not find port to connect to."
     findOpenPort triesLeft tryPort =
@@ -416,24 +459,42 @@ connectSocket mProfile startPort accessor sock = do
         connect sock address
 
 
-bindSocket :: Maybe KernelProfile -> (KernelProfile -> Int) -> Socket z t -> ZMQ z Int
+-- | Bind a socket to a port.
+--
+-- If a 'KernelProfile' is provided, then the @'KernelProfile' -> 'Port'@ accessor is used
+-- to determine which port to connect to. Otherwise, some available port is chosen. The port
+-- that was bound to is returned.
+bindSocket :: Maybe KernelProfile     -- ^ Optional kernel profile with port info
+           -> (KernelProfile -> Port) -- ^ Accessor for 'Port' inside the profile
+           -> Socket z t -- ^ Socket to 'bind'
+           -> ZMQ z Port -- ^ Return port socket was bound to
 bindSocket mProfile accessor sock = do
   bind sock (extractAddress mProfile accessor)
   endpoint sock
 
-endpoint :: Socket z t -> ZMQ z Int
+-- | Get the port that the socket was last bound to.
+endpoint :: Socket z t -> ZMQ z Port
 endpoint sock = do
   endpointString <- lastEndpoint sock
   case parsePort endpointString of
     Nothing   -> fail "fatal error (Jupyter.ZeroMQ): could not parse port as integer."
     Just port -> return port
 
+-- | Try to parse the 'Port' from an address string along the lines of @"tcp://127.0.0.1:8829"@.
+--
+-- >>> parsePort "tcp://127.0.0.1:8829" == 8829
 parsePort :: String -> Maybe Int
 parsePort s = readMaybe num
   where
     num = reverse (takeWhile isNumber (reverse s))
 
--- | Read a client message from a ZeroMQ socket.
+-- | Read a client message from a ZeroMQ socket, as well as the message header that came with it.
+-- Block until all data for the message has been received.
+--
+-- If receiving all the data succeeds but parsing fails, return a 'String' error message.
+--
+-- This message is polymorphic in its return type @v@, and so may be used to parse /any/ message
+-- type.
 receiveMessage :: (IsMessage v, Receiver a) => Socket z a -> ZMQ z (Either String (MessageHeader, v))
 receiveMessage sock = do
   -- Read all identifiers until the identifier/message delimiter.
@@ -446,11 +507,14 @@ receiveMessage sock = do
   parentHeader <- receive sock
   metadata <- receive sock
   content <- receive sock
-  return $ parseMessage idents headerData parentHeader metadata content 
+  return $ parseMessage idents headerData parentHeader metadata content
 
 -- | Read data from the socket until we hit an ending string. Return all data as a list, which does
 -- not include the ending string.
-readUntil :: Receiver a => Socket z a -> ByteString -> ZMQ z [ByteString]
+readUntil :: Receiver a
+          => Socket z a -- ^ Socket to read from
+          -> ByteString -- ^ Delimiter chunk
+          -> ZMQ z [ByteString] -- ^ Messages until (but not including) delimiter chunk
 readUntil sock terminator = do
   line <- receive sock
   if line /= terminator
@@ -459,17 +523,18 @@ readUntil sock terminator = do
       return $ line : remaining
     else return []
 
-encodeHeader :: MessageHeader -> ByteString
-encodeHeader MessageHeader { .. } =
-  encodeStrict $ object
-                   [ "msg_id" .= messageId
-                   , "session" .= messageSession
-                   , "username" .= messageUsername
-                   , "version" .= ("5.0" :: String)
-                   , "msg_type" .= messageType
-                   ]
-
-mkRequestHeader :: IsMessage v => UUID.UUID -> Username -> v -> IO MessageHeader
+-- | Create a new 'MessageHeader', which is suitable to be used for a request from a client to a
+-- kernel.
+--
+-- The main difference between 'mkRequestHeader' and 'mkReplyHeader' is that a reply header has a
+-- parent header, while a request header is not triggered by another message, and so has no parent
+-- header. However, since there is no parent header to inherit information from, the session UUID
+-- and username must be set explicitly.
+mkRequestHeader :: IsMessage v
+                => UUID.UUID -- ^ Session UUID for this client session
+                -> Username  -- ^ Username to use in the header
+                -> v -- ^ Message for which to make header (necessary to get 'MessageType')
+                -> IO MessageHeader -- ^ New 'MessageHeader', with fresh randomly generated id
 mkRequestHeader session username content = do
   uuid <- UUID.random
   return
@@ -483,7 +548,14 @@ mkRequestHeader session username content = do
       , messageType = getMessageType content
       }
 
-mkReplyHeader :: IsMessage v => MessageHeader -> v -> IO MessageHeader
+-- | Create a new 'MessageHeader' for a message which is a reply to a previous message.
+--
+-- Unlike 'mkRequestHeader', 'mkReplyHeader' requires a parent header, and so is used for replies,
+-- rather than for initiating a communication.
+mkReplyHeader :: IsMessage v
+              => MessageHeader -- ^ Header of message being replied to
+              -> v -- ^ Reply message for which to generate header (necessary to get 'MessageType')
+              -> IO MessageHeader -- ^ New 'MessageHeader', with fresh randomly generated id
 mkReplyHeader parentHeader content = do
   uuid <- UUID.random
   return
@@ -498,7 +570,8 @@ mkReplyHeader parentHeader content = do
       }
 
 
--- | Send a Jupyter message on a socket, encoding it as described in the <http://jupyter-client.readthedocs.io/en/latest/messaging.html#wire-protocol wire protocol documentation>.
+-- | Send a Jupyter message on a socket, encoding it as described in the
+-- <http://jupyter-client.readthedocs.io/en/latest/messaging.html#wire-protocol wire protocol documentation>.
 sendMessage :: (IsMessage v, Sender a)
             => ByteString -- ^ HMAC key used to sign the message.
             -> Socket z a -- ^ Socket on which to send the message.
@@ -527,14 +600,29 @@ sendMessage hmacKey sock header content = do
   sendLast contentStr
 
   where
+    -- Send one piece of a multipart message (with the 'SendMore' flag).
     sendPiece = send sock [SendMore]
+
+    -- Send the last piece of a multipart message.
     sendLast = send sock []
 
     -- Compute the HMAC SHA-256 signature of a bytestring message.
     hmac :: ByteString -> ByteString
     hmac = CBS.pack . SHA.showDigest . SHA.hmacSha256 (LBS.fromStrict hmacKey) . LBS.fromStrict
 
--- Encode to a strict bytestring.
+    -- Encode a 'MessageHeader' as a JSON ByteString.
+    encodeHeader :: MessageHeader -> ByteString
+    encodeHeader MessageHeader { .. } =
+      encodeStrict $ object
+                       [ "msg_id" .= messageId
+                       , "session" .= messageSession
+                       , "username" .= messageUsername
+                       , "version" .= ("5.0" :: String)
+                       , "msg_type" .= messageType
+                       ]
+    
+
+-- | Encode JSON to a strict bytestring.
 encodeStrict :: ToJSON a => a -> ByteString
 encodeStrict = LBS.toStrict . encode
 
@@ -544,6 +632,8 @@ encodeStrict = LBS.toStrict . encode
 -- This helper utility exists to gracefully shutdown infinite loops in which we listen on
 -- ZeroMQ sockets, and exists to stop 'ThreadKilled' exceptions from propagating back to
 -- the main thread (which, presumably, is the thread that killed the thread in question).
+--
+-- This is a utility provided for use with listener threads.
 threadKilledHandler :: AsyncException -> IO ()
 threadKilledHandler ThreadKilled = return ()
 threadKilledHandler ex = throwIO ex

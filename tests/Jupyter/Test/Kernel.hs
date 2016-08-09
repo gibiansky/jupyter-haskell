@@ -1,32 +1,39 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Test.Kernel (kernelTests) where
 
+-- Imports from 'base'
 import           Control.Concurrent (newEmptyMVar, MVar, forkIO, putMVar, takeMVar, readMVar,
-                                     killThread, threadDelay)
-import           Control.Concurrent.Async (async, wait, cancel)
-import           Control.Monad.IO.Class (liftIO)
-import           Control.Monad (forM_)
-import qualified Data.Map as Map
+                                     killThread)
 import           Control.Exception (throwIO)
-
-import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertFailure, assertBool)
-
-import           Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as LBS
-import           Data.Aeson (encode, object)
+import           Control.Monad (forM_, void)
 import           Data.Proxy (Proxy(Proxy))
 
-import           System.ZMQ4.Monadic (socket, Req(..), Dealer(..), send, receive, bind, connect, ZMQ,
-                                      Socket, SocketType, runZMQ, ZMQError)
+-- Imports from 'async'
+import           Control.Concurrent.Async (async, wait, cancel)
 
-import           Jupyter.ZeroMQ
+-- Imports from 'transformers'
+import           Control.Monad.IO.Class (liftIO)
+
+-- Imports from 'tasty'
+import           Test.Tasty (TestTree, testGroup)
+
+-- Imports from 'tasty-hunit'
+import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?))
+
+-- Imports from 'aeson'
+import           Data.Aeson (object)
+
+-- Imports from 'zeromq4-haskell'
+import           System.ZMQ4.Monadic (Req(..), Dealer(..), send, receive, runZMQ, ZMQError)
+
+-- Imports from 'jupyter'
 import           Jupyter.Kernel
 import           Jupyter.Messages
-import           Jupyter.Messages.Metadata
+import           Jupyter.Messages.Internal
+import           Jupyter.ZeroMQ
 import qualified Jupyter.UUID as UUID
 
-import           Utils (inTempDir, connectedSocket, shouldThrow, HandlerException(..))
+import           Jupyter.Test.Utils (connectedSocket, shouldThrow, HandlerException(..))
 
 kernelTests :: TestTree
 kernelTests = testGroup "Kernel Tests" [testKernel, testKernelPortsTaken, testKernelExceptions]
@@ -54,15 +61,15 @@ testKernelExceptions = testCaseSteps "Kernel Exceptions" $ \step -> do
           header <- liftIO $ mkFreshTestHeader msg
           sendMessage "" shellClientSocket header msg
 
-  thread <- async $ serveWithDynamicPorts (putMVar profileVar) defaultCommHandler brokenHandler
+  thread1 <- async $ serveWithDynamicPorts (putMVar profileVar) defaultCommHandler brokenHandler
   sendShellMsg ConnectRequest
-  wait thread `shouldThrow` [HandlerException]
+  wait thread1 `shouldThrow` [HandlerException]
 
   step "Testing broken comm handler..."
-  takeMVar profileVar
-  thread <- async $ serveWithDynamicPorts (putMVar profileVar) brokenHandler (reqHandler profileVar)
+  void $ takeMVar profileVar
+  thread2 <- async $ serveWithDynamicPorts (putMVar profileVar) brokenHandler (reqHandler profileVar)
   sendShellMsg $ CommMessage (UUID.uuidFromString "test") (object [])
-  wait thread `shouldThrow` [HandlerException]
+  wait thread2 `shouldThrow` [HandlerException]
  
   where
     reqHandler var cb req = do

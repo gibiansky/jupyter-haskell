@@ -1,25 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Test.ZeroMQ (zmqTests) where
 
+-- Imports from 'transformers'
 import           Control.Monad.IO.Class (liftIO)
 
+-- Imports from 'tasty'
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, (@=?), assertFailure, assertBool)
 
-import           Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as LBS
-import           Data.Aeson (encode)
+-- Imports from 'tasty-hunit'
+import           Test.Tasty.HUnit (testCase, (@=?))
 
-import           System.ZMQ4.Monadic (socket, Req(..), send, receive, bind, connect, ZMQ, Socket,
-                                      SocketType)
+-- Imports from 'zeromq4-haskell'
+import           System.ZMQ4.Monadic (Req(..), send, receive)
 
+-- Imports from 'jupyter'
 import           Jupyter.ZeroMQ
-import           Jupyter.Kernel
-import           Jupyter.Client
-import           Jupyter.Messages
-import           Jupyter.Messages.Metadata
 
-import           Utils (inTempDir, connectedSocket)
+import           Jupyter.Test.Utils (inTempDir, connectedSocket)
 
 zmqTests :: TestTree
 zmqTests = testGroup "ZeroMQ Tests" [testHeartbeatSocket, testReadProfile]
@@ -38,7 +35,7 @@ testHeartbeatSocket = testCase "Heartbeat Socket" $
 -- Test that kernel profile encoding and decoding works as expected.
 testReadProfile :: TestTree
 testReadProfile = testCase "Reading profile file" $
-  inTempDir $ \tmp -> do
+  inTempDir $ \_ -> do
     let filename = "profile.json"
     writeProfile testProfile filename
     profile <- readProfile filename

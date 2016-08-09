@@ -59,17 +59,13 @@ module Jupyter.Client (
     ) where
 
 -- Imports from 'base'
-import           Control.Exception (throwIO, bracket, catch, AsyncException(ThreadKilled))
+import           Control.Exception (bracket, catch)
 import           Control.Monad (forever)
 import           Data.Maybe (fromMaybe)
 
 -- Imports from 'bytestring'
 import           Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as LBS
 
--- Imports from 'aeson'
-import           Data.Aeson (encode)
---
 -- Imports from 'async'
 import           Control.Concurrent.Async (async, link, link2, cancel, Async)
 
@@ -91,7 +87,7 @@ import           System.ZMQ4.Monadic (ZMQ)
 -- Imports from 'jupyter'
 import           Jupyter.Messages (Comm, KernelRequest, ClientReply, KernelOutput, ClientRequest,
                                    KernelReply)
-import           Jupyter.Messages.Metadata (Username)
+import           Jupyter.Messages.Internal (Username)
 import           Jupyter.ZeroMQ (ClientSockets(..), withClientSockets, sendMessage, receiveMessage,
                                  messagingError, mkRequestHeader, KernelProfile(..), mkReplyHeader,
                                  threadKilledHandler, writeProfile)
