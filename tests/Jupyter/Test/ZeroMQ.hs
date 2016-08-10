@@ -1,3 +1,12 @@
+{-|
+Module      : Jupyter.Test.ZeroMQ
+Description : Miscellaneous tests for Jupyter.ZeroMQ. 
+Copyright   : (c) Andrew Gibiansky, 2016
+License     : MIT
+Maintainer  : andrew.gibiansky@gmail.com
+Stability   : stable
+Portability : POSIX
+-}
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Test.ZeroMQ (zmqTests) where
 

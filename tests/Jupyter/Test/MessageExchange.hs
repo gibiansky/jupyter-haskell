@@ -1,6 +1,6 @@
 {-|
 Module      : Jupyter.Test.MessageExchange
-Description : Client interface for Jupyter kernels.
+Description : Testing infrastructure for back-and-forth communication between clients and kernels
 Copyright   : (c) Andrew Gibiansky, 2016
 License     : MIT
 Maintainer  : andrew.gibiansky@gmail.com

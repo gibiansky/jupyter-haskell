@@ -1,3 +1,13 @@
+{-|
+Module      : Jupyter.Test.Install
+Description : Tests for the Jupyter.Install module.
+Copyright   : (c) Andrew Gibiansky, 2016
+License     : MIT
+Maintainer  : andrew.gibiansky@gmail.com
+Stability   : stable
+Portability : POSIX
+-}
+
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Test.Install (installTests) where
@@ -53,7 +63,7 @@ installTests = testGroup "Install Tests"
                  , testEndToEndInstall
                  ]
 
--- Test that version numbers from jupyter --version are properly parsed.
+-- | Test that version numbers from jupyter --version are properly parsed.
 testVersionNumberParsing :: TestTree
 testVersionNumberParsing = testCase "Version number parsing" $ do
   Just (I.JupyterVersion 10 1 0) @=? I.parseVersion "10.1.0"
@@ -63,7 +73,7 @@ testVersionNumberParsing = testCase "Version number parsing" $ do
   Nothing @=? I.parseVersion ".xx.4"
   Nothing @=? I.parseVersion "4.1.2.1.2"
 
--- Test that version numbers from jupyter --version are properly printed to the user.
+-- | Test that version numbers from jupyter --version are properly printed to the user.
 testVersionNumberPrinting :: TestTree
 testVersionNumberPrinting = testCase "Version number printing" $ do
   parseThenShow "10.1.0"
@@ -73,6 +83,7 @@ testVersionNumberPrinting = testCase "Version number printing" $ do
     parseThenShow str =
       Just str @=? (I.showVersion <$> I.parseVersion str)
 
+-- | Set the PATH variable to a particular value during execution of an IO action.
 withPath :: String -> IO a -> IO a
 withPath newPath action = 
   bracket resetPath (setEnv "PATH") (const action)
@@ -83,7 +94,7 @@ withPath newPath action =
       return $ fromMaybe "" path
 
 
--- Test that `jupyter` is found by `which` if it is on the PATH, and isn't found if its not on the
+-- | Test that `jupyter` is found by `which` if it is on the PATH, and isn't found if its not on the
 -- path or isn't executable. Ensures that all returned paths are absolute and canonical.
 testFindingJupyterExecutable :: TestTree
 testFindingJupyterExecutable = testCase "PATH searching" $
@@ -114,6 +125,7 @@ testFindingJupyterExecutable = testCase "PATH searching" $
         -- Clean up to avoid messing with future tests.
         removeFile path
 
+-- | Test that the install script can parse the version numbers output by Jupyter.
 testJupyterVersionReading :: TestTree
 testJupyterVersionReading = testCase "jupyter --version parsing" $
   inTempDir $ \_ ->
@@ -141,10 +153,17 @@ testJupyterVersionReading = testCase "jupyter --version parsing" $
       writeMockJupyter "4.1.4000"
       verifyJupyterCommand path
 
+-- | Create a mock 'jupyter' command, which always outputs a particular string to stdout and exits
+-- with exit code zero.
 writeMockJupyter :: String -> IO ()
 writeMockJupyter out = writeMockJupyter' out "" 0
 
-writeMockJupyter' :: String -> String -> Int -> IO ()
+-- | Create a mock 'jupyter' command, which outputs given strings to stdout and stderr and exits
+-- with the provided exit code.
+writeMockJupyter' :: String -- ^ What to output on stdout
+                  -> String -- ^ What to output on stderr
+                  -> Int -- ^ What exit code to exit with
+                  -> IO ()
 writeMockJupyter' stdoutOut stderrOut errCode =
   writeFile "jupyter" $
     unlines
@@ -270,7 +289,7 @@ createTestKernelspec tmp = do
       , kernelspecEnv = mempty
       }
 
--- Make a file executable.
+-- | Make a file executable.
 setExecutable :: FilePath -> IO ()
 setExecutable path = do
   perms <- getPermissions path

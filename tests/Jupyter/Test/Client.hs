@@ -103,6 +103,7 @@ defaultMessageExchange name profile =
                           , connectIopubPort = profileIopubPort profile
                           , connectStdinPort = profileStdinPort profile
                           , connectHeartbeatPort = profileHeartbeatPort profile
+                          , connectControlPort = profileControlPort profile
                           }
     , exchangeKernelRequests = []
     , exchangeComms = []
@@ -201,6 +202,7 @@ testCalculator =
                               , connectIopubPort = profileIopubPort profile
                               , connectStdinPort = profileStdinPort profile
                               , connectHeartbeatPort = profileHeartbeatPort profile
+                              , connectControlPort = profileControlPort profile
                               }
         , exchangeKernelRequests = []
         , exchangeComms = []
@@ -394,6 +396,7 @@ testClient = testMessageExchange
                           , connectIopubPort = profileIopubPort profile
                           , connectStdinPort = profileStdinPort profile
                           , connectHeartbeatPort = profileHeartbeatPort profile
+                          , connectControlPort = profileControlPort profile
                           }
     , exchangeKernelRequests = []
     , exchangeComms = []

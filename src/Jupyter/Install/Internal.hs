@@ -308,8 +308,12 @@ checkKernelspecFiles spec = do
                  then Just file
                  else Nothing
 
+-- | A list of kernelspecs, obtained by running @jupyter kernelspec list --json@.
+--
+-- The list contains the name of the kernelspec mapped to the kernelspec itself.
 newtype Kernelspecs = Kernelspecs (Map Text Kernelspec)
 
+-- | Parse the output of @jupyter kernelspec list --json@.
 instance FromJSON Kernelspecs where
   parseJSON (Object outer) = do
     inner <- outer .: "kernelspecs"
@@ -320,11 +324,15 @@ instance FromJSON Kernelspecs where
       _ -> fail "Expecting object inside 'kernelspecs' key"
   parseJSON _ = fail "Expecting object with 'kernelspecs' key"
 
-accumKernelspecs :: Map Text Kernelspec -> (Text, Value) -> Parser (Map Text Kernelspec)
+-- | Collect all kernelspecs from @jupyter kernelspec list --json@ into a single map.
+accumKernelspecs :: Map Text Kernelspec -- ^ Previously seen kernelspecs
+                 -> (Text, Value) -- ^ Kernelspec name and JSON value for it
+                 -> Parser (Map Text Kernelspec) -- ^ Map with old kernelspecs and parsed new one
 accumKernelspecs prev (name, val) = do
   kernelspec <- parseKernelspec val
   return $ Map.insert name kernelspec prev
 
+-- | Parse a JSON 'Value' into a 'Kernelspec'.
 parseKernelspec :: Value -> Parser Kernelspec
 parseKernelspec v =
   case v of

@@ -184,6 +184,7 @@ defaultClientRequestHandler KernelProfile { .. } kernelInfo callbacks req =
                                      , connectIopubPort = profileIopubPort
                                      , connectHeartbeatPort = profileHeartbeatPort
                                      , connectStdinPort = profileStdinPort
+                                     , connectControlPort = profileControlPort
                                      }
 
 -- | Indefinitely serve a kernel on the provided ports. If the ports are not open, fails with an

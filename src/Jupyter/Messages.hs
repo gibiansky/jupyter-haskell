@@ -372,6 +372,10 @@ data ExecuteOptions =
          }
   deriving (Eq, Ord, Show)
 
+-- | Default set of options for an 'ExecuteRequest'.
+--
+-- By default, 'executeStopOnError' and 'executeStoreHistory' are @True@, while 'executeSilent' and
+-- 'executeAllowStdin' are @False@.
 defaultExecuteOptions :: ExecuteOptions
 defaultExecuteOptions = ExecuteOptions
   { executeSilent = False
@@ -379,7 +383,6 @@ defaultExecuteOptions = ExecuteOptions
   , executeAllowStdin = False
   , executeStopOnError = True
   }
-
 
 -- | Whether the kernel should restart after shutting down, or remain stopped.
 data Restart =
@@ -598,12 +601,13 @@ instance IsMessage KernelReply where
                                                    <*> o .: "metadata")
       "is_complete_reply" -> Just $ \o -> IsCompleteReply <$> parseJSON (Object o)
       "connect_reply" -> Just $ \o ->
-        -- The messaging spec indicates that this message uses *_port, but the IPython kernel sends just
-        -- *... allow both?
+        -- The messaging spec indicates that this message uses fields named "shell_port", "iopub_port", etc,
+        -- but the IPython kernel sends just "shell", "iopub", etc; thus, we allow both.
         ConnectReply <$> (ConnectInfo <$> (o .: "shell_port" <|> o .: "shell")
                                       <*> (o .: "iopub_port" <|> o .: "iopub")
                                       <*> (o .: "stdin_port" <|> o .: "stdin")
-                                      <*> (o .: "hb_port" <|> o .: "hb"))
+                                      <*> (o .: "hb_port" <|> o .: "hb")
+                                      <*> (o .: "control_port" <|> o .: "control"))
       "comm_info_reply" -> Just $ \o ->
         CommInfoReply . Map.mapKeys UUID.uuidFromString <$> o .: "comms"
       "shutdown_reply" -> Just $ \o -> ShutdownReply <$> o .: "restart"
@@ -662,6 +666,7 @@ instance ToJSON KernelReply where
           , "iopub_port" .= connectIopubPort
           , "stdin_port" .= connectStdinPort
           , "hb_port" .= connectHeartbeatPort
+          , "control_port" .= connectControlPort
           ]
         CommInfoReply targetNames ->
           let mkTargetNameDict (TargetName name) = object ["target_name" .= name]
@@ -689,6 +694,7 @@ data ConnectInfo =
          , connectIopubPort :: Int -- ^ The port the PUB socket is listening on.
          , connectStdinPort :: Int -- ^ The port the stdin ROUTER socket is listening on.
          , connectHeartbeatPort :: Int -- ^ The port the heartbeat socket is listening on.
+         , connectControlPort :: Int -- ^ The port the control ROUTER socket is listening on.
          }
   deriving (Eq, Ord, Show)
 
@@ -906,7 +912,12 @@ data LanguageInfo =
          }
   deriving (Eq, Show)
 
-data CodeMirrorMode = NamedMode Text | OptionsMode Text [(Text, Value)]
+-- | Value set in a language info object for the CodeMirror mode.
+data CodeMirrorMode = NamedMode Text
+                    -- ^ Mode described just by its name
+                    | OptionsMode Text [(Text, Value)]
+                    -- ^ Mode with a name and a list of extra params.
+                    -- These parameters are interpreted by the CodeMirror library.
   deriving (Eq, Show)
 
 instance ToJSON LanguageInfo where
