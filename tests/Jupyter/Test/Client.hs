@@ -5,6 +5,7 @@ module Jupyter.Test.Client (clientTests) where
 import           Control.Exception (throwIO, bracket)
 import           Control.Monad (forM_, void)
 import           Data.Monoid ((<>))
+import           Control.Concurrent (threadDelay)
 
 -- Imports from 'transformers'
 import           Control.Monad.IO.Class (liftIO)
@@ -13,7 +14,7 @@ import           Control.Monad.IO.Class (liftIO)
 import           Test.Tasty (TestTree, testGroup)
 
 -- Imports from 'tasty-hunit'
-import           Test.Tasty.HUnit (testCase, (@=?), assertBool)
+import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertBool)
 
 -- Imports from 'text'
 import           Data.Text (Text)
@@ -36,6 +37,8 @@ import           Jupyter.Test.Utils (inTempDir, shouldThrow, HandlerException(..
 
 clientTests :: TestTree
 clientTests = testGroup "Client Tests"
+  [testHandlerExceptions]
+{-
                 [ testBasic
                 , testStdin
                 , testCalculator
@@ -44,9 +47,15 @@ clientTests = testGroup "Client Tests"
                 , testHandlerExceptions
                 , testFindingKernelspecs
                 ]
+-}
 
+-- | Test that all the demo kernelspecs are found using the 'findKernel' and 'findKernels' commands.
+--
+-- This test succeeding relies upon the kernels installing them prior to this test suite being run,
+-- or running the Python test suite before this one.
 testFindingKernelspecs :: TestTree
 testFindingKernelspecs = testCase "Finding Kernelspecs" $ do
+  -- Test 'findKernels'
   kernels <- findKernels
   let kernelNames = map kernelspecDisplayName kernels
   assertBool "Basic kernelspec not found" $ "Basic" `elem` kernelNames
@@ -54,14 +63,20 @@ testFindingKernelspecs = testCase "Finding Kernelspecs" $ do
   assertBool "Python 3 kernelspec not found" $ "Python 3" `elem` kernelNames
   assertBool "Stdin kernelspec not found" $ "Stdin" `elem` kernelNames
 
-  let expectedKernels = [("basic", "Basic"), ("stdin", "Stdin"), ("calculator", "Calculator")]
-  forM_ expectedKernels $ \(name, displayName) -> do
+  -- Test 'findKernel'
+  let expectedKernels = [ ("basic", "basic", "Basic")
+                        , ("stdin", "stdin", "Stdin")
+                        , ("calculator", "calculator", "Calculator")
+                        , ("python3", "python", "Python 3")
+                        ]
+  forM_ expectedKernels $ \(name, lang, displayName) -> do
     Just kernel <- findKernel name
-    kernelspecLanguage kernel @=? name
+    kernelspecLanguage kernel @=? lang
     kernelspecDisplayName kernel @=? displayName
     assertBool "Connection file command doesn't include connection file" $
       "abcxyz" `elem` kernelspecCommand kernel "" "abcxyz"
 
+-- | Test that the @basic@ kernel responds to all the standard messages with empty replies.
 testBasic :: TestTree
 testBasic = 
   testMessageExchange "Basic Kernel" (commandFromKernelspec "basic") "" $
@@ -92,6 +107,7 @@ testBasic =
         }
       ] ++ defaultMessageExchange "Basic" profile
 
+-- | A set of default message exchanges that hold for any simple kernels.
 defaultMessageExchange :: Text -> KernelProfile -> [MessageExchange]
 defaultMessageExchange name profile =
   [ MessageExchange
@@ -135,6 +151,7 @@ defaultMessageExchange name profile =
     }
   ]
 
+-- | Test that the stdin kernel requests stdin from the client as desired.
 testStdin :: TestTree
 testStdin =
   testMessageExchange "Stdin Kernel" (commandFromKernelspec "stdin") "skip" $
@@ -189,6 +206,8 @@ testStdin =
         }
       ] ++ defaultMessageExchange "Stdin" profile
 
+-- | Test the @calculator@ kernel, which should do execution, completion, and inspection, as well
+-- as all the default messages.
 testCalculator :: TestTree
 testCalculator =
   testMessageExchange "Calculator Kernel" (commandFromKernelspec "calculator") "Lit 5" $
@@ -305,6 +324,12 @@ testCalculator =
         }
       ]
 
+-- | Given the name of a kernel, find it's kernelspec and return a function which, given
+-- a path to the connection file, returns the kernel command invocation. For example,
+-- for the @python3@ kernel, something like the following could be the return value:
+--
+-- >>> cmd <- commandFromKernelspec "python3"
+-- >>> cmd "{connection_file}" == ["python", "-m", "ipykernel", "-f", "{connection_file}"]
 commandFromKernelspec :: Text -> IO (FilePath -> [String])
 commandFromKernelspec name = do
   kernel <- findKernel name
@@ -312,46 +337,58 @@ commandFromKernelspec name = do
     Nothing   -> fail $ "Could not find kernelspec " ++ T.unpack name
     Just spec -> return $ kernelspecCommand spec ""
   
+-- | Start the IPython kernel and return a 'ProcessHandle' for the started process.
 startIPythonKernel :: KernelProfile -> IO ProcessHandle
 startIPythonKernel = startKernel $ \profileFile -> ["python", "-m", "ipykernel", "-f", profileFile]
 
 
+-- | Test that the client interface behaves as expected when the handlers throw exceptions.
+--
+-- Namely, the exceptions should be reraised (once) on the main thread.
 testHandlerExceptions :: TestTree
-testHandlerExceptions = testCase "Client Handler Exceptions" $ do
+testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
   let exception = const $ const $ throwIO HandlerException
+      exception' = const $ const $ print "......??" >> throwIO HandlerException
       returnStdin = const . const . return $ InputReply "<>"
-      handlerKernelRequestException = ClientHandlers exception defaultClientCommHandler defaultKernelOutputHandler
+      handlerKernelRequestException = ClientHandlers exception' defaultClientCommHandler defaultKernelOutputHandler
       handlerCommException = ClientHandlers returnStdin exception defaultKernelOutputHandler
       handlerKernelOutputException = ClientHandlers returnStdin defaultClientCommHandler exception
 
   -- ConnectRequest results in status updates, so erroring on the kernel output
   -- should raise an exception in the main thread.
-  raisesHandlerException $ runIPython handlerKernelOutputException $ \_ _ ->
+  step "...exception on kernel output..."
+  raisesHandlerException $ runIPython handlerKernelOutputException $ \_ _ -> do
     sendClientRequest ConnectRequest
+    -- Since we might not get the kernel output until the connect reply, wait for 
+    -- a while to ensure we get the kernel output before the client exits.
+    liftIO $ threadDelay $ 1000 * 1000
 
   -- ConnectRequest does not sent any stdin messages, so clients that error
   -- when handling stdin messages should not crash here.
-  void $ runIPython handlerKernelRequestException $ \_ _ ->
+  step "...no exception on kernel output..."
+  void $ runIPython handlerKernelRequestException $ \_ _ -> do
     sendClientRequest ConnectRequest
 
   -- This particular ExecuteRequest should reply with comm messages, and
   -- so a comm handler that raises an exception should cause the main thread to crash.
-  raisesHandlerException $ runIPython handlerCommException $ \_ _ ->
+  step "...exception on comm..."
+  raisesHandlerException $ runIPython handlerCommException $ \_ _ -> do
     sendClientRequest $
       ExecuteRequest "import ipywidgets as widgets\nwidgets.FloatSlider()" defaultExecuteOptions
+  print "HERE"
 
   -- This particular ExecuteRequest should reply with kernel requests for stdin, and
   -- so a kernel request handler that raises an exception should cause the main thread to crash.
-  raisesHandlerException $ runIPython handlerKernelRequestException $ \_ _ ->
+  step "...exception on stdin..."
+  raisesHandlerException $ runIPython handlerKernelRequestException $ \_ _ -> do
+    liftIO $ print "prerequest"
     sendClientRequest $
       ExecuteRequest "print(input())" defaultExecuteOptions { executeAllowStdin = True }
+    liftIO $ print "postrequest"
 
   where
     runIPython = runKernelAndClient startIPythonKernel
     raisesHandlerException io = io `shouldThrow` [HandlerException]
-
-defaultClientCommHandler :: (Comm -> IO ()) -> Comm -> IO ()
-defaultClientCommHandler _ _ = return ()
 
 defaultKernelOutputHandler :: (Comm -> IO ()) -> KernelOutput -> IO ()
 defaultKernelOutputHandler _ _ = return ()

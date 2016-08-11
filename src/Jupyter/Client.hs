@@ -53,9 +53,15 @@ module Jupyter.Client (
     sendClientRequest,
     sendClientComm,
     ClientHandlers(..),
+    defaultClientCommHandler,
 
     -- * Writing Connection Files
     writeProfile,
+
+    -- * Locating kernels
+    Kernelspec(..),
+    findKernel,
+    findKernels,
     ) where
 
 -- Imports from 'base'
@@ -85,6 +91,7 @@ import           Control.Monad.Trans.Control (liftBaseWith)
 import           System.ZMQ4.Monadic (ZMQ)
 
 -- Imports from 'jupyter'
+import           Jupyter.Install (findKernel, findKernels, Kernelspec(..))
 import           Jupyter.Messages (Comm, KernelRequest, ClientReply, KernelOutput, ClientRequest,
                                    KernelReply)
 import           Jupyter.Messages.Internal (Username)
@@ -107,7 +114,7 @@ data ClientState = forall z.
 -- | A client action, representing a computation in which communication happens with a Jupyter
 -- client.
 --
--- Use 'sendClientRequest' and 'sendComm' to construct 'Client' values, the 'Monad' interface to
+-- Use 'sendClientRequest' and 'sendClientComm' to construct 'Client' values, the 'Monad' interface to
 -- manipulate them, and 'runClient' to supply all needed connection info and run the action.
 newtype Client a = Client { unClient :: ReaderT ClientState IO a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadReader ClientState, MonadThrow, MonadCatch, MonadMask)
@@ -222,6 +229,12 @@ sendClientComm comm = do
   ClientState { .. } <- ask
   header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername  comm
   clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header comm
+
+-- | A default client 'Comm' handlers, which, upon receiving a 'Comm' message, does nothing.
+--
+-- For use with the 'ClientHandlers' 'commHandler' field.
+defaultClientCommHandler :: (Comm -> IO ()) -> Comm -> IO ()
+defaultClientCommHandler _ _ = return ()
 
 -- | Spawn a new thread that forever listens on the /iopub/ socket, parsing the messages
 -- as they come in and calling the appropriate callback from the 'ClientHandlers' record.

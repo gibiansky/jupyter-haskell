@@ -272,8 +272,11 @@ parseVersion versionStr =
 -- If no such kernel exists, then 'Nothing' is returned. If an error occurs
 -- while searching for Jupyter kernels, a 'JupyterKernelspecException' is thrown.
 findKernel :: Text -> IO (Maybe Kernelspec)
-findKernel language = 
-  listToMaybe . filter ((language ==) . kernelspecLanguage) <$> findKernels
+findKernel language = do
+  Kernelspecs kernelspecs <- findKernelsInternal
+  maybe (return Nothing) 
+        (fmap Just . checkKernelspecFiles)
+        (Map.lookup language kernelspecs)
 
 -- | Find all kernelspecs that the Jupyter installation is aware of,
 -- using the @jupyter kernelspec list@ command.
@@ -281,11 +284,21 @@ findKernel language =
 -- If an error occurs while searching for Jupyter kernels, a 'JupyterKernelspecException' is thrown.
 findKernels :: IO [Kernelspec]
 findKernels = do
+  Kernelspecs kernelspecs <- findKernelsInternal
+  mapM checkKernelspecFiles $ Map.elems kernelspecs
+
+-- | Get all the installed kernelspecs using @jupyter kernelspec list --json@.
+--
+-- These kernelspecs must be passed through 'checkKernelspecFiles' before being
+-- returned to the user.
+findKernelsInternal :: IO Kernelspecs
+findKernelsInternal = do
   jupyterPath <- which "jupyter"
-  specs <- eitherDecode . CBS.pack <$> runJupyterCommand jupyterPath ["kernelspec", "list", "--json"]
+  specs <- eitherDecode . CBS.pack <$> runJupyterCommand jupyterPath
+                                         ["kernelspec", "list", "--json"]
   case specs of
-    Left err -> throwIO $ JupyterKernelspecException $ T.pack err
-    Right (Kernelspecs kernelspecs) -> mapM checkKernelspecFiles $ Map.elems kernelspecs
+    Left err    -> throwIO $ JupyterKernelspecException $ T.pack err
+    Right specs -> return specs
 
 
 -- | Kernelspecs can refer to files such as kernel.js and logo-64x64.png. Check whether the
