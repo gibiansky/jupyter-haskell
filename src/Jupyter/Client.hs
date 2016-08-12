@@ -212,6 +212,7 @@ sendClientRequest :: ClientRequest -- ^ The request to send to the connected ker
 sendClientRequest req = do
   ClientState { .. } <- ask
   header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername req
+  liftIO $ print req
   clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header req
   received <- clientLiftZMQ $ receiveMessage (clientShellSocket clientSockets)
 
@@ -274,6 +275,7 @@ listenStdin ClientState{..} handlers = async $ catch (forever respondStdin) thre
   where
     respondStdin = do
       received <- clientLiftZMQ $ receiveMessage (clientStdinSocket clientSockets)
+      liftIO $ print received
       case received of
         Left err ->
           -- There's no way to recover from this, so just die.

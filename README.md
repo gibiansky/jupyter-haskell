@@ -369,19 +369,19 @@ introduce more messages.
 An example of a kernel that uses these to read from standard input during code execution is
 available in the [`examples/stdin`](FAKE) folder.
 
-### Creating Clients
+## Creating Clients
 
-A Jupyter client (also commonly called frontends) are programs which connect to a running kernel
+Jupyter clients (also commonly called frontends) are programs which connect to a running kernel
 (possibly starting the kernel themselves) and then query them using the ZeroMQ-based messaging
 protocol. Using the `jupyter` library, the same data types are used for querying kernels as for
 receiving client messages, so if you understand [how to write kernels](#creating-kernels), using the
 client interface will be straightforward.
 
-#### Finding Kernels
+### Finding Kernels
 
-Any kernel that registers itself with Jupyter using `jupyter kernelspec install` can then be located
-using `jupyter kernelspec list`. The `jupyter` package provides two convenient wrappers around
-`jupyter kernelspec list`:
+Any kernel that registers itself with Jupyter using `jupyter kernelspec install` (or the utilities
+from the `jupyter` library) can then be located using `jupyter kernelspec list`. The `jupyter`
+package provides two convenient wrappers around `jupyter kernelspec list`:
 
 ```haskell
 -- Locate a single kernelspec in the Jupyter registry.
@@ -395,7 +395,7 @@ Using the [`Kernelspec`](FAKE) and the `kernelspecCommand` field, we can find ou
 registered kernel as a separate process. ([`System.Process`](FAKE) and the [`spawnProcess`](FAKE)
 function may prove useful here.)
 
-#### Establishing Communication with Kernels
+### Establishing Communication with Kernels
 
 Before we can communicate with a kernel, we must first set up handlers for what to do when the
 kernel sends messages to the client. The following handlers are required, stored in the
@@ -440,7 +440,7 @@ username is provided, a default username is used. The profile that was used (whe
 or set by the caller) is provided to an action `KernelProfile -> Client a`, and the [`Client`](FAKE)
 action returned is run in `IO`.
 
-#### Sending Requests to Kernels
+### Sending Requests to Kernels
 
 To send requests to kernels (and receive replies), construct the appropriate [`Client`](FAKE)
 action; these are thin wrappers around `IO` that allow you to use the [`sendClientComm`](FaKE) and
@@ -499,7 +499,7 @@ handlers = ClientHandlers {
   }
 ```
 
-This full example is in the [`examples/client-kernel-info` directory], and can be built with `stack build`,
+This full example is in the [`examples/client-kernel-info` directory](FAKE), and can be built with `stack build`,
 and executed with `stack exec client-kernel-info`. (It will work if the `python3` kernel is
 installed, but not otherwise!)
 

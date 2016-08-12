@@ -120,7 +120,7 @@ startKernel mkCmd profile = do
     [] -> fail "Jupyter.Test.Client.startKernel: Expected command with at the executable name"
     cmd:args -> do
       proc <- spawnProcess cmd args
-      threadDelay $ 500 * 1000
+      threadDelay $ 1000 * 1000
       return proc
 
 -- | Run a kernel and a client connected to that kernel (in a temporary directory).

@@ -348,12 +348,13 @@ startIPythonKernel = startKernel $ \profileFile -> ["python", "-m", "ipykernel",
 testHandlerExceptions :: TestTree
 testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
   let exception = const $ const $ throwIO HandlerException
-      exception' = const $ const $ print "......??" >> throwIO HandlerException
+      e = const $ const $ print "?!" >> throwIO HandlerException
       returnStdin = const . const . return $ InputReply "<>"
-      handlerKernelRequestException = ClientHandlers exception' defaultClientCommHandler defaultKernelOutputHandler
+      handlerKernelRequestException = ClientHandlers e defaultClientCommHandler defaultKernelOutputHandler
       handlerCommException = ClientHandlers returnStdin exception defaultKernelOutputHandler
       handlerKernelOutputException = ClientHandlers returnStdin defaultClientCommHandler exception
 
+  let wait ms = liftIO $ threadDelay $ 1000 * ms
   -- ConnectRequest results in status updates, so erroring on the kernel output
   -- should raise an exception in the main thread.
   step "...exception on kernel output..."
@@ -361,7 +362,7 @@ testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
     sendClientRequest ConnectRequest
     -- Since we might not get the kernel output until the connect reply, wait for 
     -- a while to ensure we get the kernel output before the client exits.
-    liftIO $ threadDelay $ 1000 * 1000
+    wait 1000
 
   -- ConnectRequest does not sent any stdin messages, so clients that error
   -- when handling stdin messages should not crash here.
@@ -375,16 +376,16 @@ testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
   raisesHandlerException $ runIPython handlerCommException $ \_ _ -> do
     sendClientRequest $
       ExecuteRequest "import ipywidgets as widgets\nwidgets.FloatSlider()" defaultExecuteOptions
-  print "HERE"
 
   -- This particular ExecuteRequest should reply with kernel requests for stdin, and
   -- so a kernel request handler that raises an exception should cause the main thread to crash.
   step "...exception on stdin..."
   raisesHandlerException $ runIPython handlerKernelRequestException $ \_ _ -> do
-    liftIO $ print "prerequest"
+    -- If we connect too quickly the kernel sometimes misses our message, leaving us
+    -- in a stalled state. Wait to ensure that the kernel is ready. (We could also listen
+    -- on iopub for a kernel status message if we wanted to.)
     sendClientRequest $
       ExecuteRequest "print(input())" defaultExecuteOptions { executeAllowStdin = True }
-    liftIO $ print "postrequest"
 
   where
     runIPython = runKernelAndClient startIPythonKernel
