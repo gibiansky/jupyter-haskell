@@ -34,6 +34,14 @@ def main():
                   .format(name, coverage))
             insufficient_coverage = True
 
+    if len(stats) < 8:
+        print(("Expecting at least 8 Haddock-covered modules.\n"
+               "Possibly Haddock output nothing, or number of modules "
+               "has decreased.\nIf number of modules has decreased, edit "
+               "ensure_haddock_coverage.py to be up to date."),
+              file=sys.stderr)
+        insufficient_coverage = True
+
     if insufficient_coverage:
         sys.exit(1)
 
