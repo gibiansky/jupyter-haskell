@@ -7,11 +7,15 @@ Maintainer  : andrew.gibiansky@gmail.com
 Stability   : stable
 Portability : POSIX
 
-The 'Jupyter.Kernel' module is the core of the @jupyter@ package, and allows you to quickly 
-and easily create Jupyter kernels.
+The 'Jupyter.Kernel' module provides an API for quickly and easily creating Jupyter kernels.
 
-The main entrypoint is the 'serve' function, which provides a type-safe implementation of the Jupyter
-messaging spec: Given a 'ClientRequestHandler' and a 'CommHandler', serve a Jupyter kernel.
+Jupyter kernels are programs which communicate using the
+<https://jupyter-client.readthedocs.io/en/latest/messaging.html Jupyter messaging spec>; most kernels
+are language backends that allow using a particular programming language with Jupyter frontends such as
+the <http://jupyter.org/ notebook> or <http://jupyter.org/qtconsole/stable/ QtConsole>.
+
+To run a kernel, call the 'serve' function, which provides a type-safe implementation of the Jupyter
+messaging spec.
 
 More information about the client and kernel interfaces can be found on the @jupyter@
 <https://github.com/gibiansky/jupyter-haskell README>, and several example kernels may be found in 

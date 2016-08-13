@@ -7,7 +7,11 @@ Maintainer  : andrew.gibiansky@gmail.com
 Stability   : stable
 Portability : POSIX
 
-This module serves as the primary interface to Jupyter clients, as provided by the @jupyter@ library.
+This module provides an easy API for writing Jupyter clients. Jupyter clients (also commonly called 
+frontends) are programs which
+communicate with Jupyter kernels, possibly starting them and then sending them requests over the
+ZeroMQ-based messaging protocol. Examples of Jupyter clients include the Jupyter console, the
+<http://jupyter.org/qtconsole/stable/ QtConsole>, and the <Notebook http://jupyter.org/>.
 
 Communication with clients is done in the 'Client' monad, which is a thin wrapper over 'IO' which 
 maintains a small bit of required state to identify a running kernel and the sockets on which to 
@@ -21,7 +25,11 @@ These functions can be used quite succinctly to communicate with external client
 following code connects to an installed Python kernel (the @ipykernel@ package must be installed):
 
 @
-import Jupyter.Client
+import Control.Monad.IO.Class (MonadIO(liftIO))
+import System.Process (spawnProcess)
+
+import "Jupyter.Client"
+import "Jupyter.Messages"
 
 main :: IO ()
 main = 
@@ -37,9 +45,26 @@ main =
     connection <- 'connectKernel'
     reply <- 'sendClientRequest' connection 'KernelInfoRequest'
     liftIO $ print reply
+
+handlers :: ClientHandlers
+handlers = ClientHandlers {
+    -- Do nothing on comm messages
+    'commHandler' = 'defaultClientCommHandler',
+
+    -- Return a fake stdin string if asked for stdin
+    'kernelRequestHandler' = \_ req ->
+        case req of
+          'InputRequest'{} -> return $ 'InputReply' "Fake Stdin",
+
+    -- Do nothing on kernel outputs
+    'kernelOutputHandler' = \_ _ -> return ()
+  }
 @
 
-More information about the client and kernel interfaces can be found on the @jupyter@ <https://github.com/gibiansky/jupyter-haskell README>.
+A more detailed example is provided in the
+<https://github.com/gibiansky/jupyter-haskell/tree/master/examples/client-kernel-info examples/client-kernel-info>
+directory, and more information about the client and kernel interfaces can be found on the @jupyter@
+<https://github.com/gibiansky/jupyter-haskell README>.
 -}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -122,7 +147,10 @@ data ClientState = forall z.
 newtype Client a = Client { unClient :: ReaderT ClientState IO a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadReader ClientState, MonadThrow, MonadCatch, MonadMask)
 
--- | A connection to a kernel from a client. This 
+-- | A connection to a kernel from a client.
+--
+-- A connection can be obtained with 'connectKernel', and must be provided to
+-- 'sendClientRequest' and 'sendClientComm' to communicate with a kernel.
 data KernelConnection = KernelConnection
   deriving (Eq, Ord)
 
@@ -163,9 +191,32 @@ data ClientHandlers =
 -- chooses are open – that is, that no kernel is currently connected to those ports.
 --
 -- The generated 'KernelProfile' is passed to the user-provided @'KernelProfile' -> 'Client' a@
--- callback, which may use functions such as 'sentClientRequest' to communicate with the kernel. If
+-- callback, which may use functions such as 'sendClientRequest' to communicate with the kernel. If
 -- the kernel sends messages to the client, they are handled with the callbacks provided in the
 -- 'ClientHandlers' record.
+--
+-- Most clients follow a simple pattern:
+--
+-- 1. Invoke 'runClient', passing 'Nothing' for the 'KernelProfile'. This allows 'runClient'
+-- to set up and choose its own ports.
+-- 2. Write the connection file containing the chosen ports to a JSON file using 'writeProfile'.
+-- Make sure to write it to a temporary directory, to avoid clobbering user directories with
+-- connection files.
+-- 3. If you do not know the command used to invoke the target kernel, use 'findKernel' to
+-- find the 'Kernelspec' for the kernel you wish to launch. Then, use the 'kernelspecCommand'
+-- field to generate the kernel command invocation.
+-- 4. Launch the kernel using 'spawnProcess' or a similar function, providing the connection
+-- file you wrote out as a command-line parameter.
+-- 5. Wait for the kernel to connect to the client using 'connectKernel'.
+-- 6. Use the output 'KernelConnection' from 'connectClient' to communicate with the kernel
+-- using 'sendClientRequest' (and maybe 'sendClientComm').
+--
+-- A full example is provided in the
+-- <https://github.com/gibiansky/jupyter-haskell/tree/master/examples/client-kernel-info examples/client-kernel-info>
+-- directory.
+--
+-- If any of the client handlers in the provided 'ClientHandlers' throw an exception, the client is
+-- gracefully shutdown and the exception is reraised on the main 'runClient' thread.
 runClient :: Maybe KernelProfile -- ^ Optionally, a 'KernelProfile' to connect to. If no
                                  -- 'KernelProfile' is provided, one is generated on the fly.
                                  -- However, if a 'KernelProfile' /is/ provided, and connecting to

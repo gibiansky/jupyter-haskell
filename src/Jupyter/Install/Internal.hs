@@ -123,8 +123,10 @@ showVersion (JupyterVersion major minor patch) =
 -- This function expects the @jupyter@ command to be on the user's PATH, and will fail if
 -- the @jupyter@ command is either unavailable or is a version incompatible with this library.
 --
--- More documentation about kernelspecs is located in the <TODO Jupyter documentation> and by running @jupyter kernelspec install --help@.
-installKernel :: InstallUser -- ^ Whether the kernel should be installed for only the current user (with --user) or globally
+-- More documentation about kernelspecs is located in the
+-- <http://jupyter-client.readthedocs.io/en/latest/kernels.html#kernelspecs Jupyter documentation>
+-- and by running @jupyter kernelspec install --help@.
+installKernel :: InstallUser -- ^ Whether the kernel should be installed for only the current user (with @--user@) or globally
               -> Kernelspec  -- ^ The kernelspec to install
               -> IO InstallResult -- ^ Installation result, potentially with a friendly error message
 installKernel installUser kernelspec = tryInstall `catch` handleInstallFailure

@@ -8,12 +8,14 @@ Stability   : stable
 Portability : POSIX
 
 Before any Jupyter frontends (such as the notebook or console) can use a kernel, the kernel must be installed.
-Traditionally, kernels are installed by defining a kernelspec and running @jupyter kernelspec install@. A kernelspec
+Traditionally, kernels are installed by defining a kernelspec and running @jupyter kernelspec install@, where a kernelspec
 is defined by creating a directory with a set of predefined files that Jupyter knows how to handle, and is installed by
-passing the directory to @jupyter kernelspec install@.
+passing the directory to @jupyter kernelspec install@. Installed kernelspecs may be queried with @jupyter kernelspec list@.
 
-This module provides a few utilities for defining and installing kernelspecs; a kernelspec can be defined by
-creating a value of type 'Kernelspec' and can be installed with 'installKernel'.
+Instead, this module provides a few utilities for defining, installing, and locating kernelspecs. A kernelspec
+can be defined by creating a value of type 'Kernelspec' and can be installed with 'installKernel'. The
+installed kernelspecs may be listed or searched with 'findKernels' and 'findKernel', respectively. These utilities
+are simply convenient wrappers around the @jupyter kernelspec install@ and @jupyter kernelspec list@ commands.
 -}
 module Jupyter.Install (
   -- * Kernelspec Definitions
@@ -37,8 +39,8 @@ import Jupyter.Install.Internal
 
 -- | Utility for creating simple kernelspecs, with all optional 'Kernelspec' fields initialized to their empty values.
 --
--- >>> let spec = simpleKernelspec "Python 3" "python3" $ 
--- >>>                \exe0 connFile = ["python", "-m", "ipykernel", "-f", connFile]
+-- Example for Python 3:
+-- >>> simpleKernelspec "Python 3" "python3" $ \exe0 connFile = ["python", "-m", "ipykernel", "-f", connFile]
 simpleKernelspec :: Text -- ^ The kernel display name (see 'kernelspecDisplayName').
                  -> Text -- ^ The kernel language name (see 'kernelspecLanguage').
                  -> (FilePath -> FilePath -> [String]) -- ^ The kernel command line invocation (see 'kernelspecCommand').
