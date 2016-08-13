@@ -51,6 +51,10 @@ class TestJupyter(unittest.TestCase):
         all the examples can be installed as expected."""
         manager = KernelSpecManager()
 
+        # Remove all kernelspecs first.
+        subprocess.check_call(["jupyter", "kernelspec", "remove", "-f",
+                               "basic", "calculator", "stdin"])
+
         # Check that kernelspec installation works, the kernel exists after
         # it has been installed, and the executable file is found.
         subprocess.check_call(["kernel-basic", "install"])
@@ -98,15 +102,26 @@ class TestJupyter(unittest.TestCase):
             self.assertEqual(reply["parent_header"]["msg_id"], request_uuid)
 
     def test_basic_busy_idle_message(self):
-        """Test that during code execution, busy and idle messages are sent."""
+        """Test that during code execution, execute input,
+        busy, and idle messages are sent."""
         with kernel("basic") as client:
             request_uuid = client.execute("")
+
             reply = client.get_iopub_msg(timeout=1)
             self.assertEqual(reply["header"]["msg_type"], "status")
             self.assertEqual(reply["content"], {
                 "execution_state": "busy",
             })
             self.assertEqual(reply["parent_header"]["msg_id"], request_uuid)
+
+            reply = client.get_iopub_msg(timeout=1)
+            self.assertEqual(reply["header"]["msg_type"], "execute_input")
+            self.assertEqual(reply["content"], {
+                "execution_count": 0,
+                "code": "",
+            })
+            self.assertEqual(reply["parent_header"]["msg_id"], request_uuid)
+
 
             reply = client.get_iopub_msg(timeout=1)
             self.assertEqual(reply["header"]["msg_type"], "status")
@@ -119,14 +134,16 @@ class TestJupyter(unittest.TestCase):
         """Tests calculator code execution which succeeds."""
         with kernel("calculator") as client:
             client.execute("Compute [] (Lit 1)")
-            replies = [client.get_iopub_msg(timeout=1) for _ in range(3)]
+            replies = [client.get_iopub_msg(timeout=1) for _ in range(4)]
 
             types = [msg["header"]["msg_type"] for msg in replies]
-            self.assertEqual(types, ["status", "display_data", "status"])
+            self.assertEqual(types, ["status", "execute_input",
+                                     "display_data", "status"])
 
             contents = [msg["content"] for msg in replies]
             self.assertEqual(contents, [
                 {"execution_state": "busy"},
+                {"execution_count": 1, "code": "Compute [] (Lit 1)"},
                 {"data": {"text/plain": "1"}, "metadata": {}},
                 {"execution_state": "idle"},
             ])
@@ -210,17 +227,23 @@ class TestJupyter(unittest.TestCase):
             })
 
 
-            iopubs = [client.get_iopub_msg(timeout=1) for _ in range(3)]
+            iopubs = [client.get_iopub_msg(timeout=1) for _ in range(4)]
             types = [msg["header"]["msg_type"] for msg in iopubs]
-            self.assertEqual(types, ["status", "display_data", "status"])
+            self.assertEqual(types, ["status", "execute_input",
+                                     "display_data", "status"])
 
             contents = [msg["content"] for msg in iopubs]
             self.assertEqual(contents, [
                 {"execution_state": "busy"},
+                {"execution_count": 1, "code": "Prompt"},
                 {"data": {"text/plain": "input"}, "metadata": {}},
                 {"execution_state": "idle"},
             ])
 
 
 if __name__ == '__main__':
+    # Make sure all kernelspecs are installed before starting the test suite.
+    for spec in ["basic", "calculator", "stdin"]:
+        subprocess.check_call(["kernel-{}".format(spec), "install"])
+
     unittest.main(warnings=[])

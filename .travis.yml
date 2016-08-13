@@ -51,7 +51,7 @@ before_install:
     fi
 
     # Install nbconvert for testing the notebook
-  - pip install jupyter ipykernel notebook
+  - pip install jupyter ipykernel notebook jupyter_client
 
 # This step takes the longest, and is what generates the Stack cache. 
 install:
@@ -63,6 +63,6 @@ install:
 script:
   - export LD_LIBRARY_PATH=$HOME/zeromq/lib
   - stack test --pedantic --resolver=$RESOLVER
-  - python python/tests.py
+  - stack exec python python/tests.py
   - stack clean && stack haddock --resolver=$RESOLVER 2>&1 >haddock.out
   - python python/ensure_haddock_coverage.py haddock.out
