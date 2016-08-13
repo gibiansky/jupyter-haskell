@@ -78,7 +78,7 @@ import           Data.Digest.Pure.SHA as SHA
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
                                       Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
                                       Sender, lastEndpoint, bind, unbind, connect, subscribe,
-                                      ZMQError, setIdentity, restrict)
+                                      ZMQError, setIdentity, restrict, monitor, EventType(..))
 
 -- Imports from 'jupyter'
 import           Jupyter.Messages.Internal (MessageHeader(..), IsMessage(..), Username(..))
@@ -150,6 +150,8 @@ data ClientSockets z =
          -- used for retrieving standard input from the user, hence the socket name.
          , clientIopubSocket :: Socket z Sub
          -- ^ The /iopub/ socket, used for receiving 'KernelOutput's from the kernel.
+         , clientWaitForConnections :: IO ()
+         -- ^ A function which waits for one connection on each of the sockets, using socket monitoring.
          }
 
 -- | The collection of <http://zeromq.org/ ZeroMQ> sockets needed to communicate with Jupyter
@@ -369,6 +371,24 @@ withClientSockets mProfile callback = runZMQ $ do
   setIdentity (restrict identity) clientShellSocket
   setIdentity (restrict identity) clientStdinSocket
   setIdentity (restrict identity) clientControlSocket
+
+  -- Set up socket monitoring. When you monitor a socket, you specify the event to listen for. Then,
+  -- you can call the function return from 'monitor' to block until an event is received. This lets us
+  -- easily wait for the kernel to connect, by waiting for one accepted connection event per socket.
+  -- Once we receive that, we can turn off monitoring. (Passing True listens for an event; False turns
+  -- off monitoring.)
+  -- 
+  -- You can't use 'mapM' because the sockets have different types, e.g. Socket z Req vs Socket z Dealer.
+  monitors <- sequence
+                [ monitor [ConnectedEvent] clientHeartbeatSocket
+                , monitor [ConnectedEvent] clientControlSocket
+                , monitor [ConnectedEvent] clientShellSocket
+                , monitor [ConnectedEvent] clientStdinSocket
+                , monitor [ConnectedEvent] clientIopubSocket
+                ]
+  let clientWaitForConnections = do
+        mapM_ ($ True) monitors
+        mapM_ ($ False) monitors
 
   heartbeatPort <- connectSocket mProfile 10730 profileHeartbeatPort clientHeartbeatSocket
   controlPort   <- connectSocket mProfile 11840 profileControlPort   clientControlSocket

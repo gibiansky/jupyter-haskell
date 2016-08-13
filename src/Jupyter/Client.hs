@@ -34,7 +34,8 @@ main =
       'System.Process.spawnProcess' "python" ["-m", "ipykernel", "-f", "profile.json"]
 
     -- Find out info about the kernel by sending it a kernel info request.
-    reply <- 'sendClientRequest' 'KernelInfoRequest'
+    connection <- 'connectKernel'
+    reply <- 'sendClientRequest' connection 'KernelInfoRequest'
     liftIO $ print reply
 @
 
@@ -50,10 +51,12 @@ module Jupyter.Client (
     -- * Communicating with Clients
     Client,
     runClient,
+    connectKernel,
     sendClientRequest,
     sendClientComm,
     ClientHandlers(..),
     defaultClientCommHandler,
+    KernelConnection,
 
     -- * Writing Connection Files
     writeProfile,
@@ -118,6 +121,10 @@ data ClientState = forall z.
 -- manipulate them, and 'runClient' to supply all needed connection info and run the action.
 newtype Client a = Client { unClient :: ReaderT ClientState IO a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadReader ClientState, MonadThrow, MonadCatch, MonadMask)
+
+-- | A connection to a kernel from a client. This 
+data KernelConnection = KernelConnection
+  deriving (Eq, Ord)
 
 -- | A set of callbacks for the client. These callbacks get called when the client receives any
 -- message from the kernel.
@@ -205,14 +212,25 @@ runClient mProfile mUser clientHandlers client =
               (\(async1, async2) -> cancel async1 >> cancel async2)
               (const $ runReaderT (unClient $ client profile) clientState)
 
+-- | Wait for a kernel to connect to this client, and return a 'KernelConnection' once the kernel
+-- has connected.
+--
+-- This 'KernelConnection' must be passed to 'sendClientRequest' and 'sendClientComm' to communicate
+-- with the connected kernel.
+connectKernel :: Client KernelConnection
+connectKernel = do
+  ClientState {..} <- ask
+  liftIO $ clientWaitForConnections clientSockets
+  return KernelConnection
+
 -- | Send a 'ClientRequest' to the kernel. Wait for the kernel to reply with a 'KernelReply',
 -- blocking until it does so.
-sendClientRequest :: ClientRequest -- ^ The request to send to the connected kernel.
+sendClientRequest :: KernelConnection -- ^ A kernel connection, produced by 'connectKernel'.
+                  -> ClientRequest -- ^ The request to send to the connected kernel.
                   -> Client KernelReply
-sendClientRequest req = do
+sendClientRequest _ req = do
   ClientState { .. } <- ask
   header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername req
-  liftIO $ print req
   clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header req
   received <- clientLiftZMQ $ receiveMessage (clientShellSocket clientSockets)
 
@@ -225,8 +243,10 @@ sendClientRequest req = do
 
 -- | Send a 'Comm' message to the kernel. The kernel is not obligated to respond in any way, so do
 -- not block, but return immediately upon sending the message.
-sendClientComm :: Comm -> Client ()
-sendClientComm comm = do
+sendClientComm :: KernelConnection -- ^ A kernel connection, produced by 'connectKernel'.
+               -> Comm -- ^ The 'Comm' message to send.
+               -> Client ()
+sendClientComm _ comm = do
   ClientState { .. } <- ask
   header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername  comm
   clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header comm
@@ -275,7 +295,6 @@ listenStdin ClientState{..} handlers = async $ catch (forever respondStdin) thre
   where
     respondStdin = do
       received <- clientLiftZMQ $ receiveMessage (clientStdinSocket clientSockets)
-      liftIO $ print received
       case received of
         Left err ->
           -- There's no way to recover from this, so just die.

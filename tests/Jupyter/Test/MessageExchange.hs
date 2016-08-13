@@ -118,10 +118,7 @@ startKernel mkCmd profile = do
   -- spins forever...
   case mkCmd filename of
     [] -> fail "Jupyter.Test.Client.startKernel: Expected command with at the executable name"
-    cmd:args -> do
-      proc <- spawnProcess cmd args
-      threadDelay $ 1000 * 1000
-      return proc
+    cmd:args -> spawnProcess cmd args
 
 -- | Run a kernel and a client connected to that kernel (in a temporary directory).
 --
@@ -130,12 +127,12 @@ startKernel mkCmd profile = do
 -- then ensures that the external process is shutdown before exiting.
 runKernelAndClient :: (KernelProfile -> IO ProcessHandle) -- ^ Function to start external kernel
                    -> ClientHandlers -- ^ Client handlers for messages received from the kernel
-                   -> (KernelProfile -> ProcessHandle -> Client a) -- ^ Client action to run
+                   -> (KernelProfile -> ProcessHandle -> KernelConnection -> Client a) -- ^ Client action to run
                    -> IO a
 runKernelAndClient start handlers action =
   inTempDir $ \_ -> runClient Nothing Nothing handlers $ \profile -> do
     proc <- liftIO $ start profile
-    finally (action profile proc) $ liftIO $ terminateProcess proc
+    finally (connectKernel >>= action profile proc) $ liftIO $ terminateProcess proc
 
 -- | Use the 'MessageExchange' data type to generate a test case for a test suite.
 --
@@ -169,13 +166,13 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
                                       (exchangeKernelOutputHandler kernelOutputsVar)
 
   mk <- mkKernelCommand
-  runKernelAndClient (startKernel mk) clientHandlers $ \profile proc -> do
+  runKernelAndClient (startKernel mk) clientHandlers $ \profile proc connection -> do
     -- Wait for the kernel to initialize. We know that the kernel is done initializing when it sends its
     -- first response; however, sometimes we also get a "starting" status. Since later on we check for
     -- equality of kernel outputs, we want to get rid of this timing inconsistencey immediately by just 
     -- doing on preparation message.
     liftIO $ step "Waiting for kernel to start..."
-    void $ sendClientRequest ConnectRequest
+    void $ sendClientRequest connection ConnectRequest
     liftIO $ do
       waitForKernelIdle kernelOutputsVar
       void $ swapMVar kernelOutputsVar []
@@ -183,7 +180,7 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
     -- Acquire the current session number. Without this, we can't accurately test the history replies,
     -- since they contain the session numbers. To acquire the session number, send an execute request followed
     -- by a history request.
-    execReply <- sendClientRequest $ ExecuteRequest validCode defaultExecuteOptions
+    execReply <- sendClientRequest connection $ ExecuteRequest validCode defaultExecuteOptions
     execCount <- case execReply of
       ExecuteReply count _ -> return count
       _ -> fail "Expected ExecuteReply for ExecuteRequest"
@@ -191,7 +188,7 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
       waitForKernelIdle kernelOutputsVar
       void $ swapMVar kernelOutputsVar []
 
-    histReply <- sendClientRequest $ HistoryRequest $ HistoryOptions False True $ HistoryTail 1
+    histReply <- sendClientRequest connection $ HistoryRequest $ HistoryOptions False True $ HistoryTail 1
     sessionNum <- case histReply of
       HistoryReply items -> return $ maybe 1 historyItemSession (listToMaybe items)
       _ -> fail "Expected HistoryReply for HistoryRequest"
@@ -209,7 +206,7 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
         void $ tryTakeMVar clientRepliesVar
         putMVar clientRepliesVar exchangeKernelRequests
 
-      reply <- sendClientRequest exchangeRequest
+      reply <- sendClientRequest connection exchangeRequest
 
       liftIO $ do
         waitForKernelIdle kernelOutputsVar

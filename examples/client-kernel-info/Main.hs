@@ -2,7 +2,7 @@
 import           Control.Monad.IO.Class (MonadIO(liftIO))
 import           System.Process (spawnProcess)
 
-import           Jupyter.Client (runClient, sendClientRequest, ClientHandlers(..),
+import           Jupyter.Client (runClient, sendClientRequest, ClientHandlers(..), connectKernel,
                                  defaultClientCommHandler, findKernel, writeProfile, Kernelspec(..))
 import           Jupyter.Messages (ClientRequest(KernelInfoRequest), KernelReply(KernelInfoReply),
                                    KernelRequest(InputRequest), ClientReply(InputReply))
@@ -22,7 +22,8 @@ main = do
     _ <- liftIO $ spawnProcess (head command) (tail command)
 
     -- Send a kernel info request and get the reply
-    KernelInfoReply info <- sendClientRequest KernelInfoRequest
+    connection <- connectKernel
+    KernelInfoReply info <- sendClientRequest connection KernelInfoRequest
     liftIO $ print info
 
 handlers :: ClientHandlers
