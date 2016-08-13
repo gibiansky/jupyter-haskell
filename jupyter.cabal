@@ -45,7 +45,7 @@ library
                        zeromq4-haskell >=0.1,
                        SHA             >=1.6,
                        monad-control   >=1.0,
-                       async           >= 2.1.0,
+                       async           >= 2.0,
                        exceptions      >= 0.8
 
 test-suite test-jupyter
@@ -71,11 +71,11 @@ test-suite test-jupyter
                  bytestring >= 0.10,
                  text >= 0.11,
                  zeromq4-haskell >= 0.6,
-                 transformers >= 0.4,
+                 transformers >= 0.3,
                  containers      >=0.5,
                  process >= 1.2,
                  exceptions      >= 0.8,
-                 async >= 2.1,
+                 async >= 2.0,
                  unordered-containers >= 0.2,
                  jupyter
 
@@ -110,5 +110,5 @@ executable client-kernel-info
     main-is:            Main.hs
     build-depends:      base >= 4.6, 
                         process >= 1.2,
-                        transformers >= 0.4,
+                        transformers >= 0.3,
                         jupyter
