@@ -28,21 +28,21 @@ the <https://github.com/gibiansky/jupyter-haskell/tree/master/examples examples>
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Kernel (
+  -- * Serving kernels
+  serve,
+  serveDynamic,
+  KernelCallbacks(..),
+
   -- * Defining a kernel
-  CommHandler,
-  ClientRequestHandler,
   simpleKernelInfo,
+  ClientRequestHandler,
+  defaultClientRequestHandler,
+  CommHandler,
+  defaultCommHandler,
 
   -- * Reading Kernel Profiles
   KernelProfile(..),
   readProfile,
-
-  -- * Serving kernels
-  serve,
-  serveWithDynamicPorts,
-  KernelCallbacks(..), 
-  defaultClientRequestHandler,
-  defaultCommHandler,
   ) where
 
 -- Imports from 'base'
@@ -196,7 +196,21 @@ defaultClientRequestHandler KernelProfile { .. } kernelInfo callbacks req =
 --
 -- This starts several threads which listen and write to ZeroMQ sockets on the ports indicated in
 -- the 'KernelProfile'. If an exception is raised and any of the threads die, the exception is
--- re-raised on the main thread. Otherwise, this listens on the kernels indefinitely.
+-- re-raised on the main thread.
+--
+-- Using this function generally requires a bit of setup. The most common pattern for use is as follows:
+--
+-- 1. In your kernel @Main.hs@, parse command line arguments. Some combination of arguments should include
+-- a path to a connection file; this file can be read and parsed into a 'KernelProfile' with 'readProfile'.
+-- (Often, the same executable will have a different mode that installs the kernel
+-- using 'Jupyter.Install.installKernelspec').
+-- 2. Set up any state your kernel may need, storing it in an 'Control.Concurrent.MVar' or 'Data.IORef.IORef'.
+-- 3. Define your 'CommHandler' and 'ClientRequestHandler' handlers, which read from the state and reply
+-- with any necessary messages. (These handlers /may/ be called concurrently from different threads!)
+-- 4. Provide the kernel profile and handlers to the 'serve' function, which blocks indefinitely.
+--
+-- Example kernels may be found in the
+-- <https://github.com/gibiansky/jupyter-haskell/tree/master/examples examples> directory.
 serve :: KernelProfile         -- ^ The kernel profile specifies how to listen for client messages (ports,
                                -- transport mechanism, message signing, etc).
       -> CommHandler           -- ^ The 'Comm' handler is called when 'Comm' messages are received from a
