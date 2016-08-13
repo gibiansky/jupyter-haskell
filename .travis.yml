@@ -47,4 +47,5 @@ install:
 script:
   - stack test --pedantic --resolver=$RESOLVER
   - python python/tests.py
-  - stack haddock --resolver=$RESOLVER | util/ensure-haddock-coverage
+  - stack clean && stack haddock --resolver=$RESOLVER 2>&1 >haddock.out
+  - python python/ensure_haddock_coverage.py haddock.out
