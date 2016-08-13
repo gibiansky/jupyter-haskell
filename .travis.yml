@@ -1,0 +1,42 @@
+# Test against different stack LTS versions.
+env:
+ - RESOLVER=lts-6.2  # Most recent GHC 7.10 LTS
+ - RESOLVER=lts-2.22 # Last GHC 7.8 LTS
+
+# Choose a lightweight base image; we provide our own build tools.
+language: python
+
+# Install Python 3.5 for use with the Python test suite and Jupyter.
+python:
+    - "3.5"
+
+# Enable caching.
+sudo: false
+
+# Caching so the next build will be fast too.
+# These caches are the same between resolvers, but this is fine, 
+# as Stack differentiates between its resolvers.
+cache:
+  directories:
+  - $HOME/.ghc
+  - $HOME/.cabal
+  - $HOME/.stack
+  - $HOME/zeromq
+
+before_install:
+    # Download and unpack the stack executable
+  - export PATH=$HOME/.local/bin:$PATH
+  - mkdir -p ~/.local/bin
+  - curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+
+    # Install nbconvert for testing the notebook
+  - pip install jupyter ipykernel notebook
+
+# This step takes the longest, and is what generates the Stack cache. 
+install:
+  - stack setup --resolver=$RESOLVER
+  - stack build --dependencies-only --resolver=$RESOLVER
+
+script:
+  - stack test --pedantic --resolver=$RESOLVER
+  - python python/tests.py
