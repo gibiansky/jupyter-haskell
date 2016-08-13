@@ -18,7 +18,6 @@ sudo: false
 addons:
   apt:
     packages:
-      - libzmq3-dev      # ZeroMQ
       - libgmp-dev       # GHC
 
 # Caching so the next build will be fast too.
@@ -30,21 +29,39 @@ cache:
   - $HOME/.cabal
   - $HOME/.stack
 
+# Not all packages are available – see before_install for from-source builds. 
 before_install:
     # Download and unpack the stack executable
   - export PATH=$HOME/.local/bin:$PATH
   - mkdir -p ~/.local/bin
   - curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
 
+    # Install zeromq3 -- the package is not supported yet on Travis whitelist... (06/06/2016)
+  - |
+    if [ ! -d "$HOME/zeromq/lib" ]; then
+        export OLDPWD=$(pwd) 
+        travis_retry git clone http://www.github.com/zeromq/zeromq4-x.git libzmq
+        mkdir $HOME/zeromq
+        cd libzmq
+        travis_retry ./autogen.sh
+        travis_retry ./configure --prefix=$HOME/zeromq
+        make
+        travis_retry make install
+        cd $OLDPWD
+    fi
+
     # Install nbconvert for testing the notebook
   - pip install jupyter ipykernel notebook
 
 # This step takes the longest, and is what generates the Stack cache. 
 install:
+  # Set path for pkg-config to find zeromq, otherwise install of zeromq4-haskell fails.
+  - export PKG_CONFIG_PATH=$HOME/zeromq/lib/pkgconfig/
   - stack setup --resolver=$RESOLVER
   - stack build --dependencies-only --resolver=$RESOLVER
 
 script:
+  - export LD_LIBRARY_PATH=$HOME/zeromq/lib
   - stack test --pedantic --resolver=$RESOLVER
   - python python/tests.py
   - stack clean && stack haddock --resolver=$RESOLVER 2>&1 >haddock.out
