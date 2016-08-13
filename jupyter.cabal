@@ -64,7 +64,7 @@ test-suite test-jupyter
   build-depends: base >= 4 && < 5,
                  tasty >= 0.7,
                  tasty-hunit >= 0.9,
-                 extra >= 1.4,
+                 extra >= 1.1,
                  directory >= 1.2,
                  silently >= 1.2,
                  aeson >= 0.6,
