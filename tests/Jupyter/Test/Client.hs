@@ -6,6 +6,7 @@ import           Control.Exception (throwIO, bracket)
 import           Control.Monad (forM_, void)
 import           Data.Monoid ((<>))
 import           Control.Concurrent (threadDelay)
+import           Data.Maybe (isJust)
 
 -- Imports from 'transformers'
 import           Control.Monad.IO.Class (liftIO)
@@ -14,7 +15,7 @@ import           Control.Monad.IO.Class (liftIO)
 import           Test.Tasty (TestTree, testGroup)
 
 -- Imports from 'tasty-hunit'
-import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertBool)
+import           Test.Tasty.HUnit (testCase, testCaseSteps, (@=?), assertBool, assertFailure)
 
 -- Imports from 'text'
 import           Data.Text (Text)
@@ -59,16 +60,31 @@ testFindingKernelspecs = testCase "Finding Kernelspecs" $ do
   assertBool "Python 3 kernelspec not found" $ "Python 3" `elem` kernelNames
   assertBool "Stdin kernelspec not found" $ "Stdin" `elem` kernelNames
 
+  -- Test that a nonexistent kernel returns nothing.
+  kernelM <- findKernel "xyz-not-a-kernel-nope-#@"
+  case kernelM of
+    Nothing -> return ()
+    Just _ -> assertFailure "Found a kernel that should not exist"
+
   -- Test 'findKernel'
-  let expectedKernels = [ ("basic", "basic", "Basic")
-                        , ("stdin", "stdin", "Stdin")
-                        , ("calculator", "calculator", "Calculator")
-                        , ("python3", "python", "Python 3")
+  let expectedKernels = [ ("basic", "basic", "Basic", False, False)
+                        , ("stdin", "stdin", "Stdin", False, False)
+                        , ("calculator", "calculator", "Calculator", False, False)
+                        , ("python3", "python", "Python 3", True, False)
                         ]
-  forM_ expectedKernels $ \(name, lang, displayName) -> do
+  forM_ expectedKernels $ \(name, lang, displayName, hasLogo, hasJs) -> do
     Just kernel <- findKernel name
     kernelspecLanguage kernel @=? lang
     kernelspecDisplayName kernel @=? displayName
+
+    -- Check that the files are not included if they don't exist.
+    if hasLogo
+      then assertBool "Logo file should be provided" $ isJust $ kernelspecLogoFile kernel
+      else kernelspecLogoFile kernel @=? Nothing
+    if hasJs
+      then assertBool "kernel.js file should be provided" $ isJust $ kernelspecJsFile kernel
+      else kernelspecJsFile kernel @=? Nothing
+
     assertBool "Connection file command doesn't include connection file" $
       "abcxyz" `elem` kernelspecCommand kernel "" "abcxyz"
 

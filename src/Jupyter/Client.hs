@@ -240,7 +240,7 @@ connectKernel = do
 sendClientRequest :: KernelConnection -- ^ A kernel connection, produced by 'connectKernel'.
                   -> ClientRequest -- ^ The request to send to the connected kernel.
                   -> Client KernelReply
-sendClientRequest _ req = do
+sendClientRequest KernelConnection req = do
   ClientState { .. } <- ask
   header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername req
   clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header req
@@ -258,7 +258,7 @@ sendClientRequest _ req = do
 sendClientComm :: KernelConnection -- ^ A kernel connection, produced by 'connectKernel'.
                -> Comm -- ^ The 'Comm' message to send.
                -> Client ()
-sendClientComm _ comm = do
+sendClientComm KernelConnection comm = do
   ClientState { .. } <- ask
   header <- liftIO $ mkRequestHeader clientSessionUuid clientSessionUsername  comm
   clientLiftZMQ $ sendMessage clientSignatureKey (clientShellSocket clientSockets) header comm

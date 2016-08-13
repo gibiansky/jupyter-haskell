@@ -1,17 +1,25 @@
 # Test against different stack LTS versions.
 env:
- - RESOLVER=lts-6.2  # Most recent GHC 7.10 LTS
  - RESOLVER=lts-2.22 # Last GHC 7.8 LTS
+ - RESOLVER=lts-6.11  # Most recent GHC 7.10 LTS
+ - RESOLVER=nightly-2016-08-13 # GHC 8.0 Nightly
 
 # Choose a lightweight base image; we provide our own build tools.
 language: python
 
 # Install Python 3.5 for use with the Python test suite and Jupyter.
 python:
-    - "3.5"
+  - "3.5"
 
 # Enable caching.
 sudo: false
+
+# Enable packages we need.
+addons:
+  apt:
+    packages:
+      - libzmq3-dev      # ZeroMQ
+      - libgmp-dev       # GHC
 
 # Caching so the next build will be fast too.
 # These caches are the same between resolvers, but this is fine, 
@@ -21,7 +29,6 @@ cache:
   - $HOME/.ghc
   - $HOME/.cabal
   - $HOME/.stack
-  - $HOME/zeromq
 
 before_install:
     # Download and unpack the stack executable
@@ -40,3 +47,4 @@ install:
 script:
   - stack test --pedantic --resolver=$RESOLVER
   - python python/tests.py
+  - stack haddock --resolver=$RESOLVER | util/ensure-haddock-coverage
