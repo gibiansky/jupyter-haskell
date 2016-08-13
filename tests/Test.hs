@@ -13,5 +13,4 @@ import           Jupyter.Test.ZeroMQ (zmqTests)
 main :: IO ()
 main =
   defaultMain $
-    -- testGroup "Tests" [installTests, zmqTests, kernelTests, clientTests]
-    testGroup "Tests" [clientTests]
+    testGroup "Tests" [installTests, zmqTests, kernelTests, clientTests]

@@ -28,7 +28,6 @@ import           System.Process (terminateProcess, ProcessHandle)
 
 -- Imports from 'jupyter'
 import           Jupyter.Client
-import           Jupyter.Install
 import           Jupyter.Kernel
 import           Jupyter.Messages
 
@@ -37,8 +36,6 @@ import           Jupyter.Test.Utils (inTempDir, shouldThrow, HandlerException(..
 
 clientTests :: TestTree
 clientTests = testGroup "Client Tests"
-  [testHandlerExceptions]
-{-
                 [ testBasic
                 , testStdin
                 , testCalculator
@@ -47,7 +44,6 @@ clientTests = testGroup "Client Tests"
                 , testHandlerExceptions
                 , testFindingKernelspecs
                 ]
--}
 
 -- | Test that all the demo kernelspecs are found using the 'findKernel' and 'findKernels' commands.
 --
@@ -347,7 +343,8 @@ startIPythonKernel = startKernel $ \profileFile -> ["python", "-m", "ipykernel",
 -- Namely, the exceptions should be reraised (once) on the main thread.
 testHandlerExceptions :: TestTree
 testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
-  let exception = const $ const $ throwIO HandlerException
+  let exception :: Show b => a -> b -> IO c
+      exception = const $ const $ throwIO HandlerException
       returnStdin = const . const . return $ InputReply "<>"
       handlerKernelRequestException = ClientHandlers exception defaultClientCommHandler defaultKernelOutputHandler
       handlerCommException = ClientHandlers returnStdin exception defaultKernelOutputHandler
@@ -357,7 +354,7 @@ testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
   -- should raise an exception in the main thread.
   step "...exception on kernel output..."
   raisesHandlerException $ runIPython handlerKernelOutputException $ \_ _ connection -> do
-    sendClientRequest connection ConnectRequest
+    void $ sendClientRequest connection ConnectRequest
     -- Since we might not get the kernel output until the connect reply, wait for 
     -- a while to ensure we get the kernel output before the client exits. This doesn't
     -- slow down the test suite since an exception gets thrown and we exit this thread
@@ -374,7 +371,7 @@ testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
   -- so a comm handler that raises an exception should cause the main thread to crash.
   step "...exception on comm..."
   raisesHandlerException $ runIPython handlerCommException $ \_ _ connection ->
-    sendClientRequest connection $
+    void $ sendClientRequest connection $
       ExecuteRequest "import ipywidgets as widgets\nwidgets.FloatSlider()" defaultExecuteOptions
 
   -- This particular ExecuteRequest should reply with kernel requests for stdin, and
@@ -384,7 +381,7 @@ testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
     -- If we connect too quickly the kernel sometimes misses our message, leaving us
     -- in a stalled state. Wait to ensure that the kernel is ready. (We could also listen
     -- on iopub for a kernel status message if we wanted to.)
-    sendClientRequest connection $
+    void $ sendClientRequest connection $
       ExecuteRequest "print(input())" defaultExecuteOptions { executeAllowStdin = True }
 
   where
@@ -399,9 +396,9 @@ testClientPortsTaken = testCase "Client Ports Taken"  $
   inTempDir $ \_ ->
     runClient Nothing Nothing emptyHandler $ \profile1 -> liftIO $
       bracket (startIPythonKernel profile1) terminateProcess $ const $
-        runClient Nothing Nothing emptyHandler $ \profile2 -> liftIO $
+        delay 500 $ runClient Nothing Nothing emptyHandler $ \profile2 -> liftIO $
           bracket (startIPythonKernel profile2) terminateProcess $ const $
-            runClient Nothing Nothing emptyHandler $ \profile3 -> liftIO $ do
+            delay 500 $ runClient Nothing Nothing emptyHandler $ \profile3 -> liftIO $ do
               1 + profileShellPort profile1     @=? profileShellPort profile2
               1 + profileHeartbeatPort profile1 @=? profileHeartbeatPort profile2
               1 + profileControlPort profile1   @=? profileControlPort profile2
@@ -417,6 +414,9 @@ testClientPortsTaken = testCase "Client Ports Taken"  $
           ClientHandlers (const . const . return $ InputReply "")
                          (const . const $ return ())
                          (const . const $ return ())
+      delay ms act = do
+        threadDelay $ 1000 * ms
+        act
 
 
 -- Test that messages can be sent and received on the heartbeat socket.

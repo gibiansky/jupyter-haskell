@@ -42,7 +42,7 @@ connectedSocket profile accessor socketType = do
   return sock
 
 -- | An exception type to be thrown during tests.
-data HandlerException = HandlerException
+data HandlerException = HandlerException | HandlerExceptionWithMessage String
   deriving (Eq, Ord, Show)
 
 -- | Make 'HandlerException' an instance of 'Exception' so it can be thrown

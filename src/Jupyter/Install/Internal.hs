@@ -15,26 +15,40 @@ For user-facing documentation, please check out "Jupyter.Install" instead.
 {-# LANGUAGE OverloadedStrings #-}
 module Jupyter.Install.Internal where
 
+-- Imports from 'base'
+import           Control.Exception (Exception, IOException, catch, throwIO)
 import           Control.Monad (forM_, void, unless, when, foldM)
-import           Data.Maybe (isJust, listToMaybe)
+import           Data.Maybe (isJust)
 import           System.Environment (getExecutablePath)
+import           System.IO (withFile, IOMode(..))
+import           Text.Read (readMaybe)
+
+-- Imports from 'directory'
 import           System.Directory (findExecutable, getTemporaryDirectory, removeDirectoryRecursive,
                                    createDirectoryIfMissing, copyFile, doesDirectoryExist,
                                    canonicalizePath, doesFileExist)
+
+-- Imports from 'process'
 import           System.Process (readProcess)
-import           System.IO (withFile, IOMode(..))
-import           Text.Read (readMaybe)
-import           Control.Exception (Exception, IOException, catch, throwIO)
+
+-- Imports from 'unordered-containers'
 import qualified Data.HashMap.Lazy as HashMap
+--
+-- Imports from 'containers'
+import           Data.Map (Map)
 import qualified Data.Map as Map
 
+-- Imports from 'aeson'
 import           Data.Aeson ((.=), object, encode, eitherDecode, FromJSON(..), Value(..), (.:))
 import           Data.Aeson.Types (Parser)
+
+-- Imports from 'bytestring'
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as CBS
-import qualified Data.Text as T
+
+-- Imports from 'text'
 import           Data.Text (Text)
-import           Data.Map (Map)
+import qualified Data.Text as T
 
 -- | A /kernelspec/ is a description of a kernel which tells the Jupyter command-line application
 -- how to install the kernel and tells the frontends how to invoke the kernel (command line flags,
@@ -289,14 +303,14 @@ findKernels = do
 
 -- | Get all the installed kernelspecs using @jupyter kernelspec list --json@.
 --
--- These kernelspecs must be passed through 'checkKernelspecFiles' before being
--- returned to the user.
+-- These kernelspecs must be passed through 'checkKernelspecFiles' before being returned to the
+-- user.
 findKernelsInternal :: IO Kernelspecs
 findKernelsInternal = do
   jupyterPath <- which "jupyter"
-  specs <- eitherDecode . CBS.pack <$> runJupyterCommand jupyterPath
-                                         ["kernelspec", "list", "--json"]
-  case specs of
+  specsE <- eitherDecode . CBS.pack <$> runJupyterCommand jupyterPath
+                                          ["kernelspec", "list", "--json"]
+  case specsE of
     Left err    -> throwIO $ JupyterKernelspecException $ T.pack err
     Right specs -> return specs
 

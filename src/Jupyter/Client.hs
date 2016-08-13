@@ -18,7 +18,7 @@ The 'runClient' function also requires a set of 'ClientHandlers', which are call
 when the kernel sends any sort of message to the client ('KernelRequest's, 'KernelOutput's, and 'Comm's).
 
 These functions can be used quite succinctly to communicate with external clients. For example, the
-following code connects to an installed Python kernel (the @ipykernel@ package msut be installed):
+following code connects to an installed Python kernel (the @ipykernel@ package must be installed):
 
 @
 import Jupyter.Client
@@ -185,6 +185,16 @@ runClient mProfile mUser clientHandlers client =
     liftBaseWith $ \runInBase -> do
       let sessionUsername = fromMaybe "default-username" mUser
       sessionUuid <- UUID.random
+
+      -- Don't let the listenrs start immediately. If so, we can get into an ugly, ugly
+      -- intermediate state, where the listeners are running but their Asyncs are not linked
+      -- to each other *or* to the main thread. That means that sometimes, with low probability,
+      -- the Asyncs can get an exception thrown to them *before* they are linked, and so the
+      -- thread will die without killing the other thread or the main thread. This can then
+      -- lead to deadlocks if you expect the threads to be running. 
+      --
+      -- We avoid this but ensuring that the async threads cannot get exceptions until they
+      -- are linked, using an MVar for this lock.
       let clientState = ClientState
             { clientSockets = sockets
             , clientSessionUsername = sessionUsername
@@ -193,10 +203,11 @@ runClient mProfile mUser clientHandlers client =
             , clientLiftZMQ = liftIO . runInBase
             }
 
-      let setupListeners :: IO (Async (), Async ())
+          setupListeners :: IO (Async (), Async ())
           setupListeners = do
             async1 <- listenStdin clientState clientHandlers
             async2 <- listenIopub clientState clientHandlers
+
 
             -- Ensure that if any exceptions are thrown on the handler threads,
             -- those exceptions are re-raised on the main thread.
@@ -211,6 +222,7 @@ runClient mProfile mUser clientHandlers client =
       bracket setupListeners
               (\(async1, async2) -> cancel async1 >> cancel async2)
               (const $ runReaderT (unClient $ client profile) clientState)
+            
 
 -- | Wait for a kernel to connect to this client, and return a 'KernelConnection' once the kernel
 -- has connected.

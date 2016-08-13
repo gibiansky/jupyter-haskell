@@ -58,7 +58,7 @@ import qualified Data.ByteString.Char8 as CBS
 import qualified Data.ByteString.Lazy as LBS
 
 -- Imports from 'exceptions'
-import           Control.Monad.Catch (catch)
+import           Control.Monad.Catch (catch, finally)
 
 -- Imports from 'aeson'
 import           Data.Aeson (FromJSON(..), Value(..), (.:), ToJSON(..), encode, decode, (.=), object,
@@ -78,7 +78,7 @@ import           Data.Digest.Pure.SHA as SHA
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
                                       Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
                                       Sender, lastEndpoint, bind, unbind, connect, subscribe,
-                                      ZMQError, setIdentity, restrict, monitor, EventType(..))
+                                      ZMQError, setIdentity, restrict, monitor, EventType(..), setLinger)
 
 -- Imports from 'jupyter'
 import           Jupyter.Messages.Internal (MessageHeader(..), IsMessage(..), Username(..))
@@ -362,6 +362,15 @@ withClientSockets mProfile callback = runZMQ $ do
   clientStdinSocket     <- socket Dealer
   clientIopubSocket     <- socket Sub
 
+  -- Make sure that we do not accidentally let the client run forever,
+  -- just because there are unsent messages. Shut it down eventually.
+  let linger = 300 :: Int
+  setLinger (restrict linger) clientHeartbeatSocket
+  setLinger (restrict linger) clientControlSocket
+  setLinger (restrict linger) clientShellSocket
+  setLinger (restrict linger) clientStdinSocket
+  setLinger (restrict linger) clientIopubSocket
+
   -- Set the identity of all dealer sockets to the same thing. This is really important only for the
   -- stdin socket – it must have the same identity as the shell socket (see the Note in the stdin
   -- section of the messaging protocol.) If we don't set the identity ourselves, then ZeroMQ will set
@@ -386,9 +395,7 @@ withClientSockets mProfile callback = runZMQ $ do
                 , monitor [ConnectedEvent] clientStdinSocket
                 , monitor [ConnectedEvent] clientIopubSocket
                 ]
-  let clientWaitForConnections = do
-        mapM_ ($ True) monitors
-        mapM_ ($ False) monitors
+  let clientWaitForConnections = mapM_ ($ True) monitors
 
   heartbeatPort <- connectSocket mProfile 10730 profileHeartbeatPort clientHeartbeatSocket
   controlPort   <- connectSocket mProfile 11840 profileControlPort   clientControlSocket
@@ -411,7 +418,10 @@ withClientSockets mProfile callback = runZMQ $ do
         , profileSignatureKey = maybe "" profileSignatureKey mProfile
         }
 
-  callback profile ClientSockets { .. }
+  -- Ensure that all monitors are closed after we run our action. If we don't,
+  -- ZMQ will not be able to shutdown because the monitor sockets linger.
+  finally (callback profile ClientSockets { .. })
+          (liftIO $ mapM_ ($ False) monitors)
 
 -- | Compute the address to bind a socket to, given the 'KernelProfile', using the provided tranport
 -- mechanism, IP, and port. If no 'KernelProfile' is provided (and 'Nothing' is passed), then return
