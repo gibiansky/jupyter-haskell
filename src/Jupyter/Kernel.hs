@@ -207,30 +207,33 @@ serve :: KernelProfile         -- ^ The kernel profile specifies how to listen f
 serve profile = serveInternal (Just profile) (const $ return ())
 
 -- | Indefinitely serve a kernel on some ports. Ports are allocated dynamically and so, unlike
--- 'serve', 'serveWithDynamicPorts' may be used when you do not know which ports are open or closed.
+-- 'serve', 'serveDynamic' may be used when you do not know which ports are open or closed.
 --
--- The ports allocated by 'serveWithDynamicPorts' are passed to the provided callback in the
--- 'KernelProfile' so that clients may connect to the served kernel.
+-- The ports allocated by 'serveDynamic' are passed to the provided callback in the 'KernelProfile'
+-- so that clients may connect to the served kernel.
 --
 -- After the callback is run, several threads are started which listen and write to ZeroMQ sockets
 -- on the allocated ports. If an exception is raised and any of the threads die, the exception is
 -- re-raised on the main thread. Otherwise, this listens on the kernels indefinitely after running
 -- the callback.
-serveWithDynamicPorts :: (KernelProfile -> IO ()) -- ^ This function is called with the
-                                                  -- dynamically-generated kernel profile that the
-                                                  -- kernel will serve on, so that clients may be
-                                                  -- notified of which ports to use to connect to
-                                                  -- this kernel. The callback is called after
-                                                  -- sockets are bound but before the kernel begins
-                                                  -- listening for messages, so if the callback fails
-                                                  -- with an exception the kernel threads are never
-                                                  -- started.
-                      -> CommHandler           -- ^ The 'Comm' handler is called when 'Comm' messages are
-                                               -- received from a frontend.
-                      -> ClientRequestHandler  -- ^The request handler is called when 'ClientRequest'
-                                               -- messages are received from a frontend.
-                      -> IO ()
-serveWithDynamicPorts = serveInternal Nothing
+--
+-- This function serves as a form of inverting control over the allocated ports: usually, clients
+-- will choose what ports to listen on, and provide the kernel with the ports with a connection file
+-- path in the kernel command-line arguments. With this function, you can instead first start the
+-- kernel, and then connect a client to the ports that the kernel chooses to bind to.
+serveDynamic :: (KernelProfile -> IO ()) -- ^ This function is called with the dynamically-generated
+                                         -- kernel profile that the kernel will serve on, so that
+                                         -- clients may be notified of which ports to use to connect
+                                         -- to this kernel. The callback is called after sockets are
+                                         -- bound but before the kernel begins listening for
+                                         -- messages, so if the callback fails with an exception the
+                                         -- kernel threads are never started.
+             -> CommHandler           -- ^ The 'Comm' handler is called when 'Comm' messages are received from
+                                      -- a frontend.
+             -> ClientRequestHandler  -- ^The request handler is called when 'ClientRequest' messages
+                                      -- are received from a frontend.
+             -> IO ()
+serveDynamic = serveInternal Nothing
 
 
 -- | Serve a kernel.
@@ -240,7 +243,7 @@ serveWithDynamicPorts = serveInternal Nothing
 -- used is passed to the provided callback, so that clients can be informed about how to connect to
 -- this kernel.
 --
--- Users of the library should use 'serve' or 'serveWithDynamicPorts' instead.
+-- Users of the library should use 'serve' or 'serveDynamic' instead.
 --
 -- After the callback is run, several threads are started which listen and write to ZeroMQ sockets
 -- on the allocated ports. If an exception is raised and any of the threads die, the exception is

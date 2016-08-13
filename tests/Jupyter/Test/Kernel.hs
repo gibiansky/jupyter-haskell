@@ -36,6 +36,7 @@ import           Data.Aeson (object)
 import           System.ZMQ4.Monadic (Req(..), Dealer(..), send, receive, runZMQ, ZMQError)
 
 -- Imports from 'jupyter'
+import           Jupyter.Client
 import           Jupyter.Kernel
 import           Jupyter.Messages
 import           Jupyter.Messages.Internal
@@ -45,7 +46,8 @@ import qualified Jupyter.UUID as UUID
 import           Jupyter.Test.Utils (connectedSocket, shouldThrow, HandlerException(..))
 
 kernelTests :: TestTree
-kernelTests = testGroup "Kernel Tests" [testKernel, testKernelPortsTaken, testKernelExceptions]
+kernelTests = testGroup "Kernel Tests"
+                [testKernel, testKernelPortsTaken, testKernelExceptions, testKernelServeDynamic]
 
 -- | Test that a ZMQError is thrown if we try to serve two kernels on the same profile, because the
 -- second one should fail due to the ports already being taken.
@@ -55,10 +57,40 @@ testKernelPortsTaken = testCase "Kernel Ports Taken" $ do
   let reqHandler cb req = do
         profile <- readMVar profileVar
         defaultClientRequestHandler profile (simpleKernelInfo "Test") cb req
-  thread <- async $ serveWithDynamicPorts (putMVar profileVar) defaultCommHandler reqHandler
+  thread <- async $ serveDynamic (putMVar profileVar) defaultCommHandler reqHandler
   profile <- readMVar profileVar
   serve profile defaultCommHandler reqHandler `shouldThrow` (Proxy :: Proxy ZMQError)
   cancel thread
+
+-- | Test that a client can connect to a kernel when the kernel is started with serveDynamic.
+-- second one should fail due to the ports already being taken.
+testKernelServeDynamic :: TestTree
+testKernelServeDynamic = testCase "Serve Dynamic with Client" $ do
+  -- Set up the dynamic-ported kernel.
+  profileVar <- newEmptyMVar
+  let reqHandler cb req = do
+        profile <- readMVar profileVar
+        defaultClientRequestHandler profile (simpleKernelInfo "Test") cb req
+  thread <- async $ serveDynamic (putMVar profileVar) defaultCommHandler reqHandler
+  profile <- readMVar profileVar
+
+  -- Connect a client to it.
+  runClient (Just profile) Nothing emptyHandler $ \profile' -> do
+    -- Ensure that the received profile is the same as assigned.
+    liftIO $ profile' @=? profile
+
+    -- Do a simple back-and-forth.
+    connection <- connectKernel
+    KernelInfoReply info <- sendClientRequest connection KernelInfoRequest
+    liftIO $ info @=? simpleKernelInfo "Test"
+
+  -- Kill the kernel thread.
+  cancel thread
+  where
+      emptyHandler =
+          ClientHandlers (const . const . return $ InputReply "")
+                         (const . const $ return ())
+                         (const . const $ return ())
 
 -- | Test the behaviour of the kernel if the kernel handlers throw exceptions.
 testKernelExceptions :: TestTree
@@ -75,7 +107,7 @@ testKernelExceptions = testCaseSteps "Kernel Exceptions" $ \step -> do
   -- Test that when the client request handler throws an error, the error is
   -- propagated to the main thread.
   step "Testing broken request handler..."
-  thread1 <- async $ serveWithDynamicPorts (putMVar profileVar) defaultCommHandler brokenHandler
+  thread1 <- async $ serveDynamic (putMVar profileVar) defaultCommHandler brokenHandler
   sendShellMsg ConnectRequest
   wait thread1 `shouldThrow` [HandlerException]
 
@@ -83,7 +115,7 @@ testKernelExceptions = testCaseSteps "Kernel Exceptions" $ \step -> do
   -- propagated to the main thread.
   step "Testing broken comm handler..."
   void $ takeMVar profileVar
-  thread2 <- async $ serveWithDynamicPorts (putMVar profileVar) brokenHandler (reqHandler profileVar)
+  thread2 <- async $ serveDynamic (putMVar profileVar) brokenHandler (reqHandler profileVar)
   sendShellMsg $ CommMessage (UUID.uuidFromString "test") (object [])
   wait thread2 `shouldThrow` [HandlerException]
  
@@ -101,7 +133,7 @@ testKernel = testCaseSteps "Simple Kernel" $ \step -> do
   step "Starting kernel..."
   profileVar <- newEmptyMVar
   clientMessageVar <- newEmptyMVar
-  threadId <- forkIO $ serveWithDynamicPorts (putMVar profileVar) defaultCommHandler (reqHandler profileVar clientMessageVar)
+  threadId <- forkIO $ serveDynamic (putMVar profileVar) defaultCommHandler (reqHandler profileVar clientMessageVar)
   profile <- readMVar profileVar
 
   runZMQ $ do
