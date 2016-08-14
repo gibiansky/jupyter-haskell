@@ -62,7 +62,11 @@ install:
 
 script:
   - export LD_LIBRARY_PATH=$HOME/zeromq/lib
-  - stack test --pedantic --resolver=$RESOLVER
+  - stack build
+  - stack exec kernel-basic install
+  - stack exec kernel-stdin install
+  - stack exec kernel-calculator install
   - stack exec python python/tests.py
+  - stack test --pedantic --resolver=$RESOLVER
   - stack clean && stack haddock --resolver=$RESOLVER 2>&1 >haddock.out
   - python python/ensure_haddock_coverage.py haddock.out
