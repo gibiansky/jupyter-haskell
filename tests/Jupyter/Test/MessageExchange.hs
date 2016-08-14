@@ -52,7 +52,8 @@ import           Test.Tasty.HUnit (testCaseSteps, (@=?), assertFailure)
 import           Data.Aeson.Types (Value(..))
 
 -- Imports from 'process'
-import           System.Process (spawnProcess, terminateProcess, ProcessHandle, getProcessExitCode)
+import           System.Process (spawnProcess, terminateProcess, waitForProcess, ProcessHandle,
+                                 getProcessExitCode)
 
 -- Imports from 'jupyter'
 import           Jupyter.Client
@@ -134,7 +135,7 @@ runKernelAndClient start handlers action =
     proc <- liftIO $ start profile
     finally (connectKernel >>= action profile proc) $ liftIO $ do
       terminateProcess proc
-      threadDelay $ 1000 * 1000
+      waitForProcess proc
 
 -- | Use the 'MessageExchange' data type to generate a test case for a test suite.
 --
