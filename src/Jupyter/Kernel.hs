@@ -152,7 +152,7 @@ type CommHandler = KernelCallbacks -> Comm -> IO ()
 -- use to send messages to the client.
 --
 -- The handler must return a 'KernelReply' to be sent in response to this request. 'ClientRequest'
--- and 'KernelReply' constructors come in pairs, and the output reply constructor *must* match the
+-- and 'KernelReply' constructors come in pairs, and the output reply constructor /must/ match the
 -- input request constructor.
 --
 -- Note: When the request is a 'ExecuteRequest' with the 'executeSilent' option set to @True@, the

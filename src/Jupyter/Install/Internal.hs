@@ -225,8 +225,8 @@ prepareKernelspecDirectory kernelspec dir = do
     -- Copy files indicated by the Kernelspec data type into the directory.
     copyKernelspecFiles :: Kernelspec -> IO ()
     copyKernelspecFiles Kernelspec { .. } = do
-      forM_ kernelspecJsFile $ \file -> copyFile file $ dir ++ "/kernel.js"
-      forM_ kernelspecLogoFile $ \file -> copyFile file $ dir ++ "/logo-64x64.png"
+      whenJust kernelspecJsFile $ \file -> copyFile file $ dir ++ "/kernel.js"
+      whenJust kernelspecLogoFile $ \file -> copyFile file $ dir ++ "/logo-64x64.png"
 
     -- Generate the kernel.json data structure from the Kernelspec datatype.
     generateKernelJSON :: Kernelspec -> IO ()
@@ -241,6 +241,10 @@ prepareKernelspecDirectory kernelspec dir = do
               , "language" .= kernelspecLanguage
               , "env" .= kernelspecEnv
               ]
+
+    whenJust :: Maybe a -> (a -> IO ()) -> IO ()
+    whenJust Nothing _ = return ()
+    whenJust (Just a) f = f a
 
 -- | Install a kernelspec using @jupyter kernelspec install@.
 --

@@ -228,17 +228,16 @@ messagingError moduleName msg =
 -- The kernel profile is usually obtained by a kernel by parsing the connection file passed to it as
 -- an argument as indicated by the kernelspec.
 --
--- The @profileTransport@, @profileIp@ and five @profile\*Port@ fields specify five ports which the
--- kernel should bind to using ZeroMQ. New ports are chosen at random for each kernel started.
+-- The @profileTransport@, @profileIp@ and five profile Port fields specify the ports which the
+-- kernel should bind to. These ports are usually generated fresh for every client or server started.
 --
 -- @profileSignatureKey@ is used to cryptographically sign messages, so that other users on the
 -- system can’t send code to run in this kernel. See the
--- <http://jupyter-client.readthedocs.io/en/latest/messaging.html#wire-protocol wire protocol
--- documentation> for the details of how this signature is calculated.
+-- <http://jupyter-client.readthedocs.io/en/latest/messaging.html#wire-protocol wire protocol documentation>
+-- for the details of how this signature is calculated.
 --
 -- More info on the fields of the connection file and the 'KernelProfile' is available in the
--- <http://jupyter-client.readthedocs.io/en/latest/kernels.html#connection-files respective Jupyter
--- documentation>.
+-- <http://jupyter-client.readthedocs.io/en/latest/kernels.html#connection-files respective Jupyter documentation>.
 data KernelProfile =
        KernelProfile
          { profileIp :: IP                     -- ^ The IP on which to listen.
