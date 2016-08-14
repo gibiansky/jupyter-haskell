@@ -2,7 +2,7 @@ machine:
   # Version of python to use
   python:
     version:
-      3.5
+      3.5.0
 
 ## Customize dependencies
 dependencies:
