@@ -49,7 +49,7 @@ dependencies:
         echo stack --resolver=$RESOLVER exec kernel-stdin install >> test.sh
         echo stack --resolver=$RESOLVER exec kernel-calculator install >> test.sh
         echo stack --resolver=$RESOLVER exec python python/tests.py >> test.sh
-        echo stack --resolver=$RESOLVER test $PEDANTIC --resolver=$RESOLVER >> test.sh
+        echo stack --resolver=$RESOLVER test $PEDANTIC >> test.sh
         echo stack --resolver=$RESOLVER clean >> test.sh
         echo stack --resolver=$RESOLVER haddock '&>haddock.out' >> test.sh
         echo python python/ensure_haddock_coverage.py haddock.out >> test.sh
@@ -64,5 +64,5 @@ dependencies:
 ## Customize test commands
 test:
   override:
-      - test.sh:
+      - ./test.sh:
           parallel: true
