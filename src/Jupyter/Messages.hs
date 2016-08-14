@@ -12,18 +12,19 @@ The protocol defines several ZeroMQ sockets that are used for communication betw
 as well as the format of the data that is sent on each of those sockets.
 
 To summarize briefly, the messaging protocol defines four types of communication:
+
 1. Client to kernel requests ('ClientRequest') and replies ('KernelReply')
 2. Kernel output publication to all clients ('KernelOutput')
 3. Kernel to client requests ('KernelRequest') and replies ('ClientReply')
 4. Free-form "comm" messages between kernels and clients ('Comm')
 
 Client to kernel requests and replies are sent on two sockets called the /shell/ and /control/ sockets, but 
-when using the @jupyter-kernel@ package these two sockets can be treated as a single communication channel,
+when using the @jupyter@ package these two sockets can be treated as a single communication channel,
 with the caveat that two messages may be sent at once (and thus the handlers must be thread-safe). Clients will
 send a 'ClientRequest' which the kernel must respond to with a 'KernelReply'.
 
 During the response, kernels may want to publish results, intermediate data, or errors to the front-end(s).
-This is done on the /iopub/ socket, with every published value corresponding to a 'KernelOutput'. Kernel
+This is done on the /iopub/ socket, with every published value represented via a 'KernelOutput'. Kernel
 outputs are the primary mechanism for transmitting results of code evaluation to the front-ends.
 
 In addition to publishing outputs, kernels may request input from the clients during code evaluation using 'KernelRequest' messages, to which the clients reply with a 'ClientReply'. At the moment, the
@@ -32,10 +33,13 @@ only use for 'KernelRequest's is to request standard input from the clients, so 
 Finally, kernels and frontends can create custom communication protocols using the free-form and unstructured 'Comm'
 messages. A comm in Jupyter parlance is a communication channel between a kernel and a client; either one
 may request to create or close a comm, and then send arbitrary JSON data along that comm. Kernels listen
-for 'Comm' messages on the /shell/ socket and can send their own 'Comm' messages on the /iopub/ socket.
+for 'Comm' messages on the /shell/ socket and can send their own 'Comm' messages on the /iopub/ socket. ('Comm' messages
+are not used frequently, but have been used to implement, e.g. the Jupyter widgets in
+<https://github.com/ipython/ipywidgets ipywidgets>; for most use cases, it is safe to ignore them
+and provide empty 'Comm' message handlers.)
 
-For more information, please read the <https://jupyter-client.readthedocs.io/en/latest/messaging.html full Jupyter messaging specification>.
-
+For more information, please read the
+<https://jupyter-client.readthedocs.io/en/latest/messaging.html full Jupyter messaging specification>.
 -}
 
 {-# LANGUAGE DeriveGeneric #-}
@@ -89,7 +93,8 @@ module Jupyter.Messages (
     KernelOutput(..),
     Stream(..),
     DisplayData(..),
-    displayPlain, displayLatex, displayHtml,
+    displayPlain, displayLatex, displayHtml, displayJavascript,
+    displaySvg, displayPng, displayJpg,
     ImageDimensions(..),
     MimeType(..),
     ErrorInfo(..),
@@ -145,7 +150,6 @@ import qualified Jupyter.UUID as UUID
 -- constructor which should be used in the reply.
 --
 -- For more information on each of these messages, view the appropriate section <https://jupyter-client.readthedocs.io/en/latest/messaging.html#messages-on-the-shell-router-dealer-sockets of the Jupyter messaging spec>.
-
 data ClientRequest =
                    -- | Replied to with an 'ExecuteReply'.
                    --
@@ -160,7 +164,7 @@ data ClientRequest =
                    -- the kernel to decide what information should be displayed, and its
                    -- formatting.
                    --
-                   -- The reply is a mime-bundle, like a 'DisplayData' message, which should be a
+                   -- The reply is a mime-bundle, like a 'DisplayDataOutput' message, which should be a
                    -- formatted representation of information about the context. In the notebook,
                    -- this is used to show tooltips over function calls, etc.
                     InspectRequest CodeBlock CodeOffset DetailLevel
@@ -184,7 +188,9 @@ data ClientRequest =
                    --
                    -- When the user enters a line in a console style interface, the console must
                    -- decide whether to immediately execute the current code, or whether to show a
-                   -- continuation prompt for further input. For instance, in Python @a = 5@ would
+                   -- continuation prompt for further input.
+                   --
+                   -- For instance, in Python @a = 5@ would
                    -- be executed immediately, while for @i in range(5):@ would expect further
                    -- input.
                    --
@@ -192,7 +198,7 @@ data ClientRequest =
                    --
                    --   * /complete/: code is ready to be executed
                    --   * /incomplete/: code should prompt for another line
-                   -- * /invalid/: code will typically be sent for execution, so that the user sees
+                   --   * /invalid/: code will typically be sent for execution, so that the user sees
                    -- the error soonest.
                    --   * /unknown/: if the kernel is not able to determine this.
                    --
@@ -210,6 +216,8 @@ data ClientRequest =
                    -- the ports the other ZeroMQ sockets are listening on. This allows clients to
                    -- only have to know about a single port (the shell channel) to connect to a
                    -- kernel.
+                   --
+                   -- /Warning: Connect requests are deprecated in the Jupyter messaging spec./
                     ConnectRequest
                    |
                    -- | Replied to with a 'CommInfoReply'.
@@ -233,11 +241,12 @@ data ClientRequest =
                    -- The clients can request the kernel to shut itself down; this is used in
                    -- multiple cases:
                    --
-                   -- * when the user chooses to close the client application via a menu or window
-                   -- control. * when the user invokes a frontend-specific exit method (like the
-                   -- 'quit' magic) * when the user chooses a GUI method (like the ‘Ctrl-C’
-                   -- shortcut in the IPythonQt client) to force a kernel restart to get a clean
-                   -- kernel without losing client-side state like history or inlined figures.
+                   --   * when the user chooses to close the client application via a menu or window
+                   -- control.
+                   --   * when the user invokes a frontend-specific exit method (like the @quit@ magic)
+                   --   * when the user chooses a GUI method (like the Ctrl-C
+                   --   shortcut in the IPythonQt client) to force a kernel restart to get a clean
+                   --   kernel without losing client-side state like history or inlined figures.
                    --
                    -- The client sends a shutdown request to the kernel, and once it receives the
                    -- reply message (which is otherwise empty), it can assume that the kernel has
@@ -245,6 +254,9 @@ data ClientRequest =
                    -- /shell/ sockets. Upon their own shutdown, client applications will typically
                    -- execute a last minute sanity check and forcefully terminate any kernel that
                    -- is still alive, to avoid leaving stray processes in the user’s machine.
+                   --
+                   -- Kernels that receive a shutdown request will automatically shut down after
+                   -- replying to it.
                     ShutdownRequest Restart
   deriving (Eq, Ord, Show)
 
@@ -489,7 +501,7 @@ data KernelReply =
                  -- field of all 'ExecuteReply' and 'ExecuteInput' messages.
                  --
                  -- 'ExecuteReply' does not include any output data, only a status, as the output
-                 -- data is sent via 'DisplayData' messages on the /iopub/ channel (in
+                 -- data is sent via 'DisplayDataOutput' messages on the /iopub/ channel (in
                  -- 'KernelOutput' messages).
                   ExecuteReply ExecutionCount ExecuteResult 
                  |
@@ -498,7 +510,7 @@ data KernelReply =
                  -- Code can be inspected to show useful information to the user. It is up to the
                  -- kernel to decide what information should be displayed, and its formatting.
                  --
-                 -- The reply is a mime-bundle, like a 'DisplayData' message, which should be a
+                 -- The reply is a mime-bundle, like a 'DisplayDataOutput' message, which should be a
                  -- formatted representation of information about the context. In the notebook,
                  -- this is used to show tooltips over function calls, etc.
                   InspectReply InspectResult
@@ -525,7 +537,9 @@ data KernelReply =
                  --
                  -- For example, when the user enters a line in a console style interface, the
                  -- console must decide whether to immediately execute the current code, or whether
-                 -- to show a continuation prompt for further input. For instance, in Python @a =
+                 -- to show a continuation prompt for further input.
+                 --
+                 -- For instance, in Python @a =
                  -- 5@ would be executed immediately, while @for i in range(5):@ would expect
                  -- further input.
                   IsCompleteReply CodeComplete
@@ -693,7 +707,7 @@ data ConnectInfo =
          { connectShellPort :: Int -- ^ The port the shell ROUTER socket is listening on.
          , connectIopubPort :: Int -- ^ The port the PUB socket is listening on.
          , connectStdinPort :: Int -- ^ The port the stdin ROUTER socket is listening on.
-         , connectHeartbeatPort :: Int -- ^ The port the heartbeat socket is listening on.
+         , connectHeartbeatPort :: Int -- ^ The port the heartbeat REP socket is listening on.
          , connectControlPort :: Int -- ^ The port the control ROUTER socket is listening on.
          }
   deriving (Eq, Ord, Show)
@@ -750,7 +764,9 @@ instance FromJSON HistoryItem where
 --
 -- For example, when the user enters a line in a console style interface, the console must decide
 -- whether to immediately execute the current code, or whether to show a continuation prompt for
--- further input. For instance, in Python @a = 5@ would be executed immediately, while @for i in
+-- further input.
+--
+-- For instance, in Python @a = 5@ would be executed immediately, while @for i in
 -- range(5):@ would expect further input.
 data CodeComplete =
                   -- | The provided code is complete. Complete code is ready to be executed.
@@ -786,13 +802,14 @@ instance FromJSON CodeComplete where
 newtype ExecutionCount = ExecutionCount Int
   deriving (Eq, Ord, Show, Num, ToJSON, FromJSON)
 
--- | All operations share a similar result structure. They can:
+-- | Many operations share a similar result structure. They can:
+--
 --   * complete successfully and return a result ('OperationOk')
 --   * fail with an error ('OperationError')
 --   * be aborted by the user ('OperationAbort')
 --
 -- This data type captures this pattern, and is used in a variety of replies, such as
--- 'ExecuteResult' and 'InspectResult.'
+-- 'ExecuteResult' and 'InspectResult'.
 data OperationResult f =
                        -- | The operation completed successfully, returning some value @f@.
                         OperationOk f
@@ -895,20 +912,19 @@ data KernelInfo =
 data LanguageInfo =
        LanguageInfo
          { languageName :: Text      -- ^ Name of the programming language that the kernel implements.
-                                     -- Kernel included in IPython returns 'python'.
+                                     -- Kernel included in IPython returns @python@.
          , languageVersion :: Text   -- ^ Language version number. It is Python version number (e.g.,
-                                     -- '2.7.3') for the kernel included in IPython.
+                                     -- @2.7.3@) for the kernel included in IPython.
          , languageMimetype :: Text  -- ^ mimetype for script files in this language.
-         , languageFileExtension :: Text  -- ^ Extension for script files including the dot, e.g.
-                                          -- '.py'
+         , languageFileExtension :: Text  -- ^ Extension for script files including the dot, e.g.  @.py@
          , languagePygmentsLexer :: Maybe Text -- ^ Pygments lexer, for highlighting (Only needed if
-                                               -- it differs from the 'name' field.)
+                                               -- it differs from the 'languageName' field.)
          , languageCodeMirrorMode :: Maybe CodeMirrorMode -- ^ Codemirror mode, for for highlighting in the
                                                 -- notebook. (Only needed if it differs from the
-                                                -- 'name' field.)
+                                                -- 'languageName' field.)
          , languageNbconvertExporter :: Maybe Text -- ^ Nbconvert exporter, if notebooks written with
                                                    -- this kernel should be exported with something
-                                                   -- other than the general 'script' exporter.
+                                                   -- other than the general @script@ exporter.
          }
   deriving (Eq, Show)
 
@@ -918,6 +934,9 @@ data CodeMirrorMode = NamedMode Text
                     | OptionsMode Text [(Text, Value)]
                     -- ^ Mode with a name and a list of extra params.
                     -- These parameters are interpreted by the CodeMirror library.
+                    --
+                    -- For example, the 'CodeMirrorMode' that corresponds to the JSON value
+                    -- @{"name": "mode", "key": "value"}@ would be @'OptionsMode' "mode" [("mode", String "value")]@.
   deriving (Eq, Show)
 
 instance ToJSON LanguageInfo where
@@ -961,10 +980,8 @@ instance FromJSON CodeMirrorMode where
 data HelpLink =
        HelpLink
          { helpLinkText :: Text -- ^ Text to show for the link.
-         , helpLinkURL :: Text  -- ^ URL the link points to.
-                                --
-                                -- This URL is not validated, and is used directly as the link
-                                -- destination.
+         , helpLinkURL :: Text  -- ^ URL the link points to. This URL is not validated, and is used
+                                -- directly as the link destination.
          }
   deriving (Eq, Ord, Show)
 
@@ -1034,13 +1051,13 @@ instance IsMessage ClientReply where
 
 -- | During processing and code execution, the kernel publishes side effects through messages sent
 -- on its /iopub/ socket. Side effects include kernel outputs and notifications, such as writing to
--- standard output or standard error, displaying rich outputs via @display_data@ messages, updating
--- the frontend with kernel status, etc.
+-- standard output or standard error, displaying rich outputs via 'DisplayDataOutput' messages,
+-- updating the frontend with kernel status, etc.
 --
 -- Multiple frontends may be subscribed to a single kernel, and 'KernelOutput' messages are
 -- published to all frontends simultaneously.
 data KernelOutput =
-                  -- | Write text to @stdout@ or @stderr@.
+                  -- | Write text to @stdout@ ('StreamStdout') or @stderr@ ('StreamStderr').
                    StreamOutput Stream Text
                   |
                   -- | Send data that should be displayed (text, html, svg, etc.) to all frontends.
@@ -1048,6 +1065,9 @@ data KernelOutput =
                   -- frontend to decide which to use and how. A single message should contain all
                   -- possible representations of the same information; these representations are
                   -- encapsulated in the 'DisplayData' type.
+                  --
+                  -- For transmitting non-textual displays, such as images, data should be base64
+                  -- encoded and represented as text.
                    DisplayDataOutput DisplayData
                   |
                   -- | Inform all frontends of the currently executing code. To let all frontends
@@ -1057,15 +1077,14 @@ data KernelOutput =
                    ExecuteInputOutput ExecutionCount CodeBlock
                   |
                   -- | Results of an execution are published as an 'ExecuteResult'. These are
-                  -- identical to @display_data@ ('DisplayDataOutput') messages, with the addition
-                  -- of an 'ExecutionCount' key.
+                  -- identical to 'DisplayDataOutput' messages, with the addition of an
+                  -- 'ExecutionCount' key.
                   --
                   -- Results can have multiple simultaneous formats depending on its configuration.
                   -- A plain text representation should always be provided in the text/plain
                   -- mime-type ('MimePlainText'). Frontends are free to display any or all of the
                   -- provided representations according to their capabilities, and should ignore
-                  -- mime-types they do not understand. The data itself is any JSON object and
-                  -- depends on the format. It is often, but not always a string.
+                  -- mime-types they do not understand.
                    ExecuteResultOutput ExecutionCount DisplayData
                   |
                   -- | When an error occurs during code execution, a 'ExecuteErrorOutput' should be
@@ -1078,7 +1097,7 @@ data KernelOutput =
                   -- This message type is used by frontends to monitor the status of the kernel.
                   --
                   -- Note: 'KernelBusy' and 'KernelIdle' messages should be sent before and after
-                  -- handling /every/ message, not just code execution.
+                  -- handling /every/ message (not just code execution!).
                    KernelStatusOutput KernelStatus
                   |
                   -- | This message type is used to clear the output that is visible on the
@@ -1087,7 +1106,14 @@ data KernelOutput =
                   -- The 'WaitBeforeClear' parameter changes when the output will be cleared
                   -- (immediately or delayed until next output).
                    ClearOutput WaitBeforeClear
-                  | ShutdownNotificationOutput Restart
+                  |
+                  -- | Inform the frontends that the kernel is shutting down.
+                  --
+                  -- This message should be broadcast whenever a 'ShutdownRequest' is received, so
+                  -- that all frontends, not just the one that requested the shutdown, know the
+                  -- kernel is shutting down. The 'Restart' field should match what was requested
+                  -- in the 'ShutdownRequest'.
+                   ShutdownNotificationOutput Restart
   deriving (Eq, Ord, Show)
 
 instance IsMessage KernelOutput where
@@ -1135,8 +1161,8 @@ instance ToJSON KernelOutput where
           ["restart" .= restart]
 
 -- | Output stream to write messages to.
-data Stream = StreamStdout -- ^ @stdout@
-            | StreamStderr -- ^ @stderr@
+data Stream = StreamStdout -- ^ Standard output
+            | StreamStderr -- ^ Standard error
   deriving (Eq, Ord, Show)
 
 instance ToJSON Stream where
@@ -1190,7 +1216,7 @@ instance FromJSON KernelStatus where
   parseJSON (String "starting") = pure KernelStarting
   parseJSON _ = fail "Expecting 'idle', 'busy', 'starting' as 'execution_state' field"
 
--- | Target module for a @comm_open@ message, optionally used in combination with a 'TargetName' to 
+-- | Target module for a 'CommOpen' message, optionally used in combination with a 'TargetName' to 
 -- let the receiving side of the 'CommOpen' message know how to create the @comm@.
 newtype TargetModule = TargetModule Text
   deriving (Eq, Ord, Show, FromJSON, ToJSON)
@@ -1211,7 +1237,7 @@ newtype TargetModule = TargetModule Text
 -- For more information on @comm@ messages, read the
 -- <https://jupyter-client.readthedocs.io/en/latest/messaging.html#custom-messages section in the Jupyter messaging spec>.
 data Comm =
-          -- | A @comm_open@ message used to request that the receiving end create a @comm@ with
+          -- | A 'CommOpen' message used to request that the receiving end create a @comm@ with
           -- the provided UUID and target name.
           --
           -- The 'TargetName' lets the receiving end what sort of @comm@ to create; this
@@ -1226,13 +1252,13 @@ data Comm =
           -- wishes to include for this @comm@ message.
            CommOpen UUID Value TargetName (Maybe TargetModule)
           |
-          -- | A @comm_close@ message destroys a @comm@, selecting it by its UUID.
+          -- | A 'CommClose' message destroys a @comm@, selecting it by its UUID.
           --
           -- The auxiliary JSON @data@ value can contain any information the client or kernel
           -- wishes to include for this @comm@ message.
            CommClose UUID Value
           |
-          -- | A @comm_msg@ message sends some JSON data to a @comm@, selecting it by its UUID.
+          -- | A 'CommMessage' message sends some JSON data to a @comm@, selecting it by its UUID.
            CommMessage UUID Value
   deriving (Eq, Show)
 
@@ -1263,7 +1289,7 @@ instance ToJSON Comm where
         CommMessage uuid commData ->
           ["comm_id" .= uuid, "data" .= commData]
 
--- | A @display_data@ /mimebundle/ used to publish rich data to Jupyter frontends.
+-- | A display data /mimebundle/, used to publish rich data to Jupyter frontends.
 --
 -- A mimebundle contains all possible representations of an object available to the kernel in a map
 -- from 'MimeType' keys to encoded data values. By sending all representations to the Jupyter
@@ -1274,23 +1300,43 @@ instance ToJSON Comm where
 -- All data must be encoded into 'Text' values; for items such as images, the data must be
 -- base64-encoded prior to transmission.
 --
--- In order to create the 'DisplayData' values, use the provided 'displayPlain', 'displayHTML',
+-- In order to create the 'DisplayData' values, use the provided 'displayPlain', 'displayHtml',
 -- 'displayJavascript', etc, utilities; the 'Monoid' instance can be used to combine 'DisplayData'
 -- values to create values with multiple possible representations.
 newtype DisplayData = DisplayData (Map MimeType Text)
   deriving (Eq, Ord, Show, Typeable, Generic, Monoid)
 
--- | Create a text/plain 'DisplayData' bundle out of a bit of 'Text'.
+-- | Create a @text/plain@ 'DisplayData' bundle out of a bit of 'Text'.
 displayPlain :: Text -> DisplayData
 displayPlain = DisplayData . Map.singleton MimePlainText
---
--- | Create a text/latex 'DisplayData' bundle out of a bit of 'Text'.
-displayLatex :: Text -> DisplayData
-displayLatex = DisplayData . Map.singleton MimeLatex
---
--- | Create a text/html 'DisplayData' bundle out of a bit of 'Text'.
+
+-- | Create a @text/html@ 'DisplayData' bundle out of a bit of 'Text'.
 displayHtml :: Text -> DisplayData
 displayHtml = DisplayData . Map.singleton MimeHtml
+
+-- | Create a @text/latex@ 'DisplayData' bundle out of a bit of 'Text'.
+displayLatex :: Text -> DisplayData
+displayLatex = DisplayData . Map.singleton MimeLatex
+
+-- | Create a @application/javascript@ 'DisplayData' bundle out of a bit of 'Text'.
+displayJavascript :: Text -> DisplayData
+displayJavascript = DisplayData . Map.singleton MimeJavascript
+
+-- | Create a @image/svg+xml@ 'DisplayData' bundle out of a bit of 'Text'.
+displaySvg :: Text -> DisplayData
+displaySvg = DisplayData . Map.singleton MimeSvg
+
+-- | Create a @image/png@ 'DisplayData' bundle out of a bit of 'Text'.
+--
+-- The text should be base-64 encoded data.
+displayPng :: ImageDimensions -> Text -> DisplayData
+displayPng dims = DisplayData . Map.singleton (MimePng dims)
+
+-- | Create a @image/jpg@ 'DisplayData' bundle out of a bit of 'Text'.
+--
+-- The text should be base-64 encoded data.
+displayJpg :: ImageDimensions -> Text -> DisplayData
+displayJpg dims = DisplayData . Map.singleton (MimeJpg dims)
 
 -- | Convert a 'DisplayData' to a list of JSON fields.
 --
@@ -1304,6 +1350,8 @@ mimebundleFields (DisplayData displayData) =
     encodeDisplayMetadata =
       Map.mapKeys showMimeType . Map.mapMaybeWithKey (\mime _ -> mimeTypeMetadata mime)
 
+-- | Parse a display data out of an object that has a data and metadata field, and
+-- represents a mimebundle.
 parseDisplayData :: Object -> Parser DisplayData
 parseDisplayData o = do
   displayData <- Map.toList <$> o .: "data"
@@ -1327,8 +1375,6 @@ parseDisplayData o = do
         _ -> fail $ "Unknown mimetype: " ++ show key
       return $ (mimetype, value) : previous
 
-
-
 -- | Dimensions of an image, to be included with the 'DisplayData' bundle in the 'MimeType'.
 data ImageDimensions =
        ImageDimensions
@@ -1341,13 +1387,13 @@ instance ToJSON ImageDimensions where
   toJSON (ImageDimensions width height) = object ["width" .= width, "height" .= height]
 
 -- | Mime types for the display data, with any associated metadata that the mime types may require.
-data MimeType = MimePlainText -- ^ @text/plain@
-              | MimeHtml      -- ^ @text/html@
-              | MimePng ImageDimensions -- ^ @image/png@, with associated image width and height
-              | MimeJpg ImageDimensions -- ^ @image/jpg@, with associated image width and height
-              | MimeSvg -- ^ @image/svg+xml@
-              | MimeLatex -- ^ @text/latex@
-              | MimeJavascript -- ^ @application/javascript@
+data MimeType = MimePlainText -- ^ A @text/plain@ mimetype for text
+              | MimeHtml      -- ^ A @text/html@ mimetype for HTML
+              | MimePng ImageDimensions -- ^ A @image/png@ mimetype for PNG images, with associated image width and height
+              | MimeJpg ImageDimensions -- ^ A @image/jpg@ mimetype for JPG images, with associated image width and height
+              | MimeSvg -- ^ A @image/svg+xml@ mimetype for SVG images
+              | MimeLatex -- ^ A @text/latex@ mimetype for LaTeX
+              | MimeJavascript -- ^ A @application/javascript@ mimetype for Javascript
   deriving (Eq, Ord, Show, Typeable, Generic)
 
 -- | Convert a 'MimeType' into its standard string representation.
