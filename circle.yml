@@ -14,7 +14,7 @@ dependencies:
     - |
       if [ ! -d "$HOME/zeromq/lib" ]; then
           export OLDPWD=$(pwd)
-          git clone http://www.github.com/zeromq/zeromq4-x.git libzmq
+          git clone http://www.github.com/zeromq/zeromq4-1.git libzmq
           mkdir $HOME/zeromq
           cd libzmq
           ./autogen.sh
@@ -59,7 +59,6 @@ dependencies:
     - "~/.ghc"
     - "~/.cabal"
     - "~/.stack"
-    - "~/zeromq/lib"
 
 ## Customize test commands
 test:
