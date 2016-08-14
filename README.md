@@ -4,8 +4,8 @@ The `jupyter` package provides a type-safe high-level interface for interacting 
 and clients using the [Jupyter messaging
 protocol](https://jupyter-client.readthedocs.io/en/latest/messaging.html), without having to deal
 with the low-level details of network communication and message encoding and decoding. Specifically,
-the package provides easy ways of [Jupyter kernels](#creating-kernels) and [Jupyter
-clients](#creating-clients).
+the package provides a quick way of writing [Jupyter kernels](#creating-kernels) and [Jupyter
+clients](#creating-clients) in Haskell.
 
 If you are looking for a Haskell kernel (for evaluating Haskell in the Jupyter
 notebook or another frontend), take a look at [IHaskell](http://github.com/gibiansky/IHaskell).
@@ -524,13 +524,13 @@ of Github, feel free to email me; my email is available on my
 - **`stack build`**: Use `stack build` to build the library and run the examples.
 - **`stack test`**: For any bug fix or feature addition, please make sure to
 extend the test suite as well, and verify that `stack test` runs your test and
-succeeds.
+succeeds. [Travis CI](https://travis-ci.org/gibiansky/jupyter-haskell) is used to
+test all pull requests, and must be passing before they will be merged.
 - **`stack exec python python/tests.py`**: Part of the test suite is triggered
 from Python (to be able to use the `jupyter_client` library); make sure that
 the Python test suite passes as well. You can create a Python environment for
 yourself separate from your global one with the `pyvenv` command: `pyvenv env
 && source env/bin/activate`.
-- **`hindent`**: Please try to keep the code formatted similarly to the rest of
-the codebase; you can do so in an automated manner using the
-[`hindent`](https://github.com/chrisdone/hindent) tool with the `gibiansky`
-style.
+- **`stack haddock`**: Please make sure that all top-level identifiers are well
+documented; specifically, run `stack haddock` and ensure that all modules have
+100% complete documentation. This is tested automatically on Travis CI, as well.
