@@ -13,6 +13,7 @@ For user-facing documentation, please check out "Jupyter.Install" instead.
 
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 module Jupyter.Install.Internal where
 
 -- Imports from 'base'
@@ -22,6 +23,10 @@ import           Data.Maybe (isJust)
 import           System.Environment (getExecutablePath)
 import           System.IO (withFile, IOMode(..))
 import           Text.Read (readMaybe)
+
+#if !MIN_VERSION_base(4, 8, 0)
+import           Control.Applicative ((<$>), (<*>), pure)
+#endif
 
 -- Imports from 'directory'
 import           System.Directory (findExecutable, getTemporaryDirectory, removeDirectoryRecursive,
