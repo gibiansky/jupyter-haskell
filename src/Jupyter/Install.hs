@@ -40,6 +40,7 @@ import Jupyter.Install.Internal
 -- | Utility for creating simple kernelspecs, with all optional 'Kernelspec' fields initialized to their empty values.
 --
 -- Example for Python 3:
+--
 -- >>> simpleKernelspec "Python 3" "python3" $ \exe0 connFile = ["python", "-m", "ipykernel", "-f", connFile]
 simpleKernelspec :: Text -- ^ The kernel display name (see 'kernelspecDisplayName').
                  -> Text -- ^ The kernel language name (see 'kernelspecLanguage').
