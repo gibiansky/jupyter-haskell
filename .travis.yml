@@ -27,6 +27,7 @@ cache:
   - $HOME/.ghc
   - $HOME/.cabal
   - $HOME/.stack
+  - $HOME/zeromq/lib
 
 # Not all packages are available – see before_install for from-source builds. 
 before_install:
