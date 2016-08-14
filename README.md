@@ -10,6 +10,8 @@ clients](#creating-clients) in Haskell.
 If you are looking for a Haskell kernel (for evaluating Haskell in the Jupyter
 notebook or another frontend), take a look at [IHaskell](http://github.com/gibiansky/IHaskell).
 
+[![Build Status](https://travis-ci.org/gibiansky/jupyter-haskell.svg?branch=master)](https://travis-ci.org/gibiansky/jupyter-haskell)
+
 ### Table of Contents
 
 - [What is Jupyter?](#what-is-jupyter)
