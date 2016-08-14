@@ -102,7 +102,7 @@ there are different messaging patterns that happen between clients and kernels:
 The `jupyter` package encodes these messaging patterns in the type system. Each
 type of message corresponds to its own data type, and clients and kernels are created by
 supplying appropriate handlers for all messages that they can receive. For example, client requests correspond to the 
-[`ClientRequest`](FAKE) data type:
+[`ClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientRequest) data type:
 ```haskell
 -- | A request sent by a client to a kernel.
 data ClientRequest
@@ -118,7 +118,7 @@ newtype CodeBlock = CodeBlock Text
 newtype CodeOffset = CodeOffset Int
 ```
 
-Each of the [`ClientRequest`](FAKE) constructors has a corresponding [`KernelReply`](FAKE) constructor:
+Each of the [`ClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientRequest) constructors has a corresponding [`KernelReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelReply) constructor:
 ```haskell
 -- | A reply sent by a kernel to a client.
 data KernelReply
@@ -128,7 +128,8 @@ data KernelReply
   | ...
 ```
 
-Kernels may send [`KernelOutput`](FAKE) messages to publish outputs to the clients:
+Kernels may send
+[`KernelOutput`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelOutput) messages to publish outputs to the clients:
 ```haskell
 -- | Outputs sent by kernels to all connected clients
 data KernelOutput
@@ -149,9 +150,10 @@ data MimeType
   | ...
 ```
 
-The other message types are represented by the [`KernelRequest`](FAKE) data type (requests from
-the kernel to a single client, e.g. for standard input), [`ClientReply`](FAKE) (replies to
-[`KernelRequest`](FAKE) messages), and [`Comm`](FAKE) messages (arbitrary unstructured communication between
+The other message types are represented by the
+[`KernelRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelRequest) data type (requests from
+the kernel to a single client, e.g. for standard input), [`ClientReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientReply) (replies to
+[`KernelRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelRequest) messages), and [`Comm`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:Comm) messages (arbitrary unstructured communication between
 frontends and servers).
 
 ## Creating Kernels
@@ -167,12 +169,13 @@ that clients running on the machine know what kernels are available and how to i
 The Jupyter project provides a command-line tool (invoked via `jupyter kernelspec install`) which
 installs a kernel when provided with a directory known as a *kernelspec*. The `jupyter` project
 automates creating and populating this directory with all needed files and invoking `jupyter
-kernelspec install` via the [`installKernelspec`](FAKE) function in [`Jupyter.Install`](FAKE):
+kernelspec install` via the
+[`installKernel`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Install.html#v:installKernel) function in [`Jupyter.Install`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Install.html):
 
 ```haskell
-installKernelspec :: InstallUser -- ^ Whether to install globally or just for this user.
-                  -> Kernelspec  -- ^ Record describing the kernel.
-                  -> IO InstallResult
+installKernel :: InstallUser -- ^ Whether to install globally or just for this user.
+              -> Kernelspec  -- ^ Record describing the kernel.
+              -> IO InstallResult
 
 -- | Install locally (with --user) or globally (without --user).
 data InstallUser = InstallLocal | InstallGlobal
@@ -182,7 +185,8 @@ data InstallResult = InstallSucccessful
                    | InstallFailed Text -- ^ Constructor with reason describing failure.
 ```
 
-A kernel is described by a [`Kernelspec`](FAKE):
+A kernel is described by a
+[`Kernelspec`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Install.html#t:Kernelspec):
 ```haskell
 data Kernelspec =
        Kernelspec
@@ -201,7 +205,7 @@ can be invoked). The `kernelspecCommand` function is provided with the absolute 
 the currently running executable and to a connection file (see the [next section](#communicating-with-clients)
 for more on connection files), and must generate a command-line invocation.
 
-For testing and demo purposes, `jupyter` provides a helper function [`simpleKernelspec`](FAKE) to generate a default kernelspec just from the three fields described above:
+For testing and demo purposes, `jupyter` provides a helper function [`simpleKernelspec`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Install.html#v:simpleKernelspec) to generate a default kernelspec just from the three fields described above:
 ```haskell
 simpleKernelspec :: Text  -- ^ Display name
                  -> Text  -- ^ Language name
@@ -209,7 +213,7 @@ simpleKernelspec :: Text  -- ^ Display name
                  -> Kernelspec
 ```
 
-Using [`simpleKernelspec`](FAKE), we can put together the smallest viable snippet for installing a kernelspec:
+Using [`simpleKernelspec`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Install.html#v:simpleKernelspec), we can put together the smallest viable snippet for installing a kernelspec:
 
 ```haskell
 -- | Install a kernel called "Basic" for a language called "basic".
@@ -227,16 +231,17 @@ install =
 
 Once the kernel is registered, clients can start the kernel, passing it a connection file as a
 command-line parameter. A connection file contains a JSON encoded kernel profile
-([`KernelProfile`](FAKE)), which specifies low-level details such as the IP address to serve on, the
+([`KernelProfile`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-ZeroMQ.html#t:KernelProfile)), which specifies low-level details such as the IP address to serve on, the
 transport method, and the ports for the ZeroMQ sockets used for communication.
 
-To decode the JSON-encoded profile, the [`readProfile`](FAKE) utility is provided:
+To decode the JSON-encoded profile, the
+[`readProfile`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-ZeroMQ.html#v:readProfile) utility is provided:
 ```haskell
 -- | Try to read a kernel profile from a file; return Nothing if parsing fails.
 readProfile :: FilePath -> IO (Maybe KernelProfile)
 ```
 
-Obtaining the [`KernelProfile`](FAKE) enables you to call the main interface to the [`Jupyter.Kernel`](FAKE) module:
+Obtaining the [`KernelProfile`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-ZeroMQ.html#t:KernelProfile) enables you to call the main interface to the [`Jupyter.Kernel`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html) module:
 ```haskell
 serve :: KernelProfile -- ^ Specifies how to communicate with clients
       -> CommHandler   -- ^ What to do when you receive a Comm message
@@ -244,13 +249,13 @@ serve :: KernelProfile -- ^ Specifies how to communicate with clients
       -> IO ()
 ```
 
-The kernel behaviour is specified by the two message handlers, the [`CommHandler`](FAKE) and the [`ClientRequestHandler`](FAKE). The [`ClientRequestHandler`](FAKE) receives a [`ClientRequest`](FAKE) and must generate a [`KernelReply`](FAKE) to send to the client:
+The kernel behaviour is specified by the two message handlers, the [`CommHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:CommHandler) and the [`ClientRequestHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:ClientRequestHandler). The [`ClientRequestHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:ClientRequestHandler) receives a [`ClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientRequest) and must generate a [`KernelReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelReply) to send to the client:
 ```haskell
 type ClientRequestHandler = KernelCallbacks -> ClientRequest -> IO KernelReply
 ```
-The constructor of the output [`KernelReply`](FAKE) *must* match the constructor of the [`ClientRequest`](FAKE).
+The constructor of the output [`KernelReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelReply) *must* match the constructor of the [`ClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientRequest).
 
-Besides generating the [`KernelReply`](FAKE), the [`ClientRequestHandler`](FAKE) may also send
+Besides generating the [`KernelReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelReply), the [`ClientRequestHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:ClientRequestHandler) may also send
 messages to the client using the publishing callbacks:
 ```haskell
 data KernelCallbacks = PublishCallbacks {
@@ -259,19 +264,22 @@ data KernelCallbacks = PublishCallbacks {
     sendKernelRequest :: KernelRequest -> IO ClientReply
   }
 ```
-For example, during code execution, the kernel will receive an [`ExecuteRequest`](FAKE), run the
-requested code, using `sendKernelOutput` to send [`KernelOutput`](FAKE) messages to the client with
-intermediate and final outputs of the running code, and then generate a [`ExecuteReply`](FAKE) that
+For example, during code execution, the kernel will receive an
+[`ExecuteRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#v:ExecuteRequest), run the
+requested code, using `sendKernelOutput` to send [`KernelOutput`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelOutput) messages to the client with
+intermediate and final outputs of the running code, and then generate a
+[`ExecuteReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#v:ExecuteReply) that
 is returned once the code is done running.
 
-The [`CommHandler`](FAKE) is similar, but is called when the kernel receives [`Comm`](FAKE) messages
-instead of [`ClientRequest`](FAKE) messages. Many kernels will not want to support any [`Comm`](FAKE) messages,
-so a default handler [`defaultCommHandler`](FAKE) is provided, which simply ignores all [`Comm`](FAKE)
+The [`CommHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:CommHandler) is similar, but is called when the kernel receives [`Comm`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:Comm) messages
+instead of [`ClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientRequest) messages. Many kernels will not want to support any [`Comm`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:Comm) messages,
+so a default handler [`defaultCommHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#v:defaultCommHandler) is provided, which simply ignores all [`Comm`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:Comm)
 messages.
 
-Unlike the [`CommHandler`](FAKE), the [`ClientRequestHandler`](FAKE) *must* generate a reply to
+Unlike the [`CommHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:CommHandler), the [`ClientRequestHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:ClientRequestHandler) *must* generate a reply to
 every request; it does not have the option of returning no output. Since there are quite a few
-request types, a default implementation is provided as [`defaultClientRequestHandler`](FAKE), which
+request types, a default implementation is provided as
+[`defaultClientRequestHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#v:defaultClientRequestHandler), which
 responds to almost all messages with an empty response:
 ```haskell
 defaultClientRequestHandler :: KernelProfile -- ^ The profile this kernel is serving
@@ -279,10 +287,10 @@ defaultClientRequestHandler :: KernelProfile -- ^ The profile this kernel is ser
                             -> ClientRequestHandler
 ```
 
-The [`KernelInfo`](FAKE) record required for the [`defaultClientRequestHandler`](FAKE) has quite a
+The [`KernelInfo`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelInfo) record required for the [`defaultClientRequestHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#v:defaultClientRequestHandler) has quite a
 bit of information in it, so for any production kernel you will want to fill out all the records,
 but for demo purposes `juptyer` provides the utility
-[`simpleKernelInfo`](FAKE):
+[`simpleKernelInfo`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#v:simpleKernelInfo):
 ```haskell
 simpleKernelInfo :: Text -- ^ Name to give this kernel
                  -> KernelInfo
@@ -324,7 +332,8 @@ main = do
     _ -> putStrLn "Invalid arguments."
 ```
 
-This example is available in the [`examples/basic`](FAKE) subdirectory, and you can build and run it
+This example is available in the
+[`examples/basic`](https://github.com/gibiansky/jupyter-haskell/tree/master/examples/basic) subdirectory, and you can build and run it
 with `stack`:
 ```bash
 stack build jupyter:kernel-basic
@@ -337,7 +346,7 @@ In order to write a more useful kernel, we would need to supply a more useful cl
 handler; the client handler would need to parse the code being sent for execution, execute it, and
 publish any results of the execution to the frontends using the `publishOutput` callback. An example
 kernel that implements a simple calculator and handles most message types is provided in the
-[`examples/calculator`](FAKE) directory, and can be built and run similarly to the `basic` kernel
+[`examples/calculator`](https://github.com/gibiansky/jupyter-haskell/tree/master/examples/calculator) directory, and can be built and run similarly to the `basic` kernel
 (see above).
 
 ### Reading from Standard Input
@@ -350,8 +359,8 @@ from standard input.
 Since the kernel may be running as a subprocess of the frontend, or can even be running on a remote
 machine, the kernel must be able to somehow intercept reads from standard input and turn them into
 requests to the Jupyter frontend that requested the code execution. To facilitate this, the
-[`KernelCallbacks`](FAKE) record provided to the [`ClientRequestHandler`](FAKE) has a
-[`sendKernelRequest`](FAKE) callback:
+[`KernelCallbacks`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:KernelCallbacks) record provided to the [`ClientRequestHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#t:ClientRequestHandler) has a
+[`sendKernelRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#v:sendKernelRequest) callback:
 
 ```haskell
 -- Send a request to the kernel and wait for a reply in a blocking manner.
@@ -365,13 +374,14 @@ data InputOptions = InputOptions { inputPrompt :: Text, inputPassword :: Bool }
 data ClientReply = InputReply Text
 ```
 
-The [`KernelRequest`](FAKE) and [`ClientReply`](FAKE) data types are meant to mirror the
-more widely used [`ClientRequest`](FAKE) and [`KernelReply`](FAKE) data types; at the moment, these
+The [`KernelRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelRequest) and [`ClientReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientReply) data types are meant to mirror the
+more widely used [`ClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientRequest) and [`KernelReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelReply) data types; at the moment, these
 data types are used only for standard input, but future versions of the messaging protocol may
 introduce more messages.
 
 An example of a kernel that uses these to read from standard input during code execution is
-available in the [`examples/stdin`](FAKE) folder.
+available in the
+[`examples/stdin`](https://github.com/gibiansky/jupyter-haskell/tree/master/examples/stdin) folder.
 
 ## Creating Clients
 
@@ -395,15 +405,16 @@ findKernel :: Text -> IO (Maybe Kernelspec)
 findKernels :: IO [Kernelspec]
 ```
 
-Using the [`Kernelspec`](FAKE) and the `kernelspecCommand` field, we can find out how to launch any
-registered kernel as a separate process. ([`System.Process`](FAKE) and the [`spawnProcess`](FAKE)
+Using the [`Kernelspec`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Install.html#t:Kernelspec) and the `kernelspecCommand` field, we can find out how to launch any
+registered kernel as a separate process.
+([`System.Process`](https://hackage.haskell.org/package/process/docs/System-Process.html) and the [`spawnProcess`](https://hackage.haskell.org/package/process/docs/System-Process.html#v:spawnProcess)
 function may prove useful here.)
 
 ### Establishing Communication with Kernels
 
 Before we can communicate with a kernel, we must first set up handlers for what to do when the
 kernel sends messages to the client. The following handlers are required, stored in the
-[`ClientHandlers`](FAKE) record:
+[`ClientHandlers`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#t:ClientHandlers) record:
 
 ```haskell
 data ClientHandlers =
@@ -414,21 +425,23 @@ data ClientHandlers =
          }
 ```
 
-Each of the handlers receives a `Comm -> IO ()` callback; this may be used to send [`Comm`](FAKE)
+Each of the handlers receives a `Comm -> IO ()` callback; this may be used to send [`Comm`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:Comm)
 messages to whatever kernel sent the message being handled.
 
-* The `kernelRequestHandler` receives a [`KernelRequest`](FAKE) (likely a request for standard input
-  from the user), and must generate an appropriate [`ClientReply`](FAKE), with a constructor
+* The `kernelRequestHandler` receives a [`KernelRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelRequest) (likely a request for standard input
+  from the user), and must generate an appropriate [`ClientReply`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:ClientReply), with a constructor
   matching the one of the request.
-* The `commHandler` may do anything in response to a [`Comm`](FAKE) message, including doing
-  nothing; since doing nothing is a common option, the [`defaultCommHandler`](FAKE) function is
+* The `commHandler` may do anything in response to a
+  [`Comm`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:Comm) message, including doing
+  nothing; since doing nothing is a common option, the [`defaultCommHandler`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Kernel.html#v:defaultCommHandler) function is
   provided that does exactly this (that is, nothing).
-* The `kernelOutputHandler` is called whenever a [`KernelOutput`](FAKE) message is produced by the
+* The `kernelOutputHandler` is called whenever a [`KernelOutput`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelOutput) message is produced by the
   kernel. This can be used to display output to the user, update a kernel busy / idle status
   indicator, etc.
 
-Once a [`ClientHandlers`](FAKE) value is set up, the [`runClient`](FAKE) function can be used to run
-any [`Client`](FAKE) command:
+Once a
+[`ClientHandlers`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#t:ClientHandlers) value is set up, the [`runClient`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#v:runClient) function can be used to run
+any [`Client`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#t:Client) command:
 
 ```haskell
 runClient :: Maybe KernelProfile
@@ -438,21 +451,25 @@ runClient :: Maybe KernelProfile
           -> IO a
 ```
 
-In addition to the handlers, [`runClient`](FAKE) takes an optional [`KernelProfile`](FAKE) to
+In addition to the handlers, [`runClient`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#v:runClient) takes an optional [`KernelProfile`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-ZeroMQ.html#t:KernelProfile) to
 connect to and an optional username. If no profile is provided, one is chosen automatically; if no
 username is provided, a default username is used. The profile that was used (whether autogenerated
-or set by the caller) is provided to an action `KernelProfile -> Client a`, and the [`Client`](FAKE)
+or set by the caller) is provided to an action `KernelProfile -> Client a`, and the
+[`Client`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#t:Client)
 action returned is run in `IO`.
 
 ### Sending Requests to Kernels
 
-To send requests to kernels (and receive replies), construct the appropriate [`Client`](FAKE)
-action; these are thin wrappers around `IO` that allow you to use the [`sendClientComm`](FaKE) and
-more importantly [`sendClientRequest`](FAKE) to communicate with kernels.
+To send requests to kernels (and receive replies), construct the appropriate [`Client`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#t:Client)
+action; these are thin wrappers around `IO` that allow you to use the
+[`sendClientComm`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#v:sendClientComm) and
+more importantly
+[`sendClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#v:sendClientRequest) to communicate with kernels.
 
-Before [`sendClientRequest`](FAKE) can be used, though, the connection to the kernel must be verified.
-This is done by [`connectKernel`](FAKE), which blocks until the kernel connects to the client and
-returns a `KernelConnection` for use with [`sendClientRequest`](FAKE). Once we have a `KernelConnection`,
+Before [`sendClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#v:sendClientRequest) can be used, though, the connection to the kernel must be verified.
+This is done by
+[`connectKernel`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#v:connectKernel), which blocks until the kernel connects to the client and
+returns a `KernelConnection` for use with [`sendClientRequest`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Client.html#v:sendClientRequest). Once we have a `KernelConnection`,
 we can query the kernel, as in:
 
 ```haskell
@@ -462,7 +479,7 @@ getKernelInfoReply connection = do
   return info
 ```
 
-For example, the [`KernelInfo`](FAKE) for the `python3` kernel can be obtained as follows:
+For example, the [`KernelInfo`](http://hackage.haskell.org/package/jupyter/docs/Jupyter-Messages.html#t:KernelInfo) for the `python3` kernel can be obtained as follows:
 
 ```haskell
 {-# LANGUAGE OverloadedStrings #-}
