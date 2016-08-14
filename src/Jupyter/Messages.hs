@@ -124,6 +124,7 @@ import           GHC.Generics (Generic)
 
 #if !MIN_VERSION_base(4, 8, 0)
 import           Control.Applicative ((<$>))
+import           Data.Monoid (mempty)
 #endif
 
 -- Imports from 'aeson'

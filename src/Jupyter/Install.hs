@@ -17,6 +17,7 @@ can be defined by creating a value of type 'Kernelspec' and can be installed wit
 installed kernelspecs may be listed or searched with 'findKernels' and 'findKernel', respectively. These utilities
 are simply convenient wrappers around the @jupyter kernelspec install@ and @jupyter kernelspec list@ commands.
 -}
+{-# LANGUAGE CPP #-}
 module Jupyter.Install (
   -- * Kernelspec Definitions
   Kernelspec(..),
@@ -31,6 +32,11 @@ module Jupyter.Install (
   findKernel,
   findKernels,
   ) where
+
+-- Imports from 'base'
+#if !MIN_VERSION_base(4, 8, 0)
+import           Data.Monoid (mempty)
+#endif
 
 -- Imports from 'text'
 import Data.Text (Text)
