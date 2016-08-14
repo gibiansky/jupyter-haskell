@@ -128,12 +128,13 @@ startKernel mkCmd profile = do
 runKernelAndClient :: (KernelProfile -> IO ProcessHandle) -- ^ Function to start external kernel
                    -> ClientHandlers -- ^ Client handlers for messages received from the kernel
                    -> (KernelProfile -> ProcessHandle -> KernelConnection -> Client a) -- ^ Client action to run
-                   -> IO ()
+                   -> IO a
 runKernelAndClient start handlers action =
   inTempDir $ \_ -> runClient Nothing Nothing handlers $ \profile -> do
     proc <- liftIO $ start profile
-    finally (connectKernel >>= action profile proc) $ liftIO $ terminateProcess proc
-    liftIO $ threadDelay $ 1000 * 1000
+    finally (connectKernel >>= action profile proc) $ liftIO $ do
+      terminateProcess proc
+      threadDelay $ 1000 * 1000
 
 -- | Use the 'MessageExchange' data type to generate a test case for a test suite.
 --
