@@ -399,11 +399,11 @@ withClientSockets mProfile callback = runZMQ $ do
                 ]
   let clientWaitForConnections = mapM_ ($ True) monitors
 
-  heartbeatPort <- connectSocket mProfile 10730 profileHeartbeatPort clientHeartbeatSocket
-  controlPort   <- connectSocket mProfile 11840 profileControlPort   clientControlSocket
-  shellPort     <- connectSocket mProfile 12950 profileShellPort     clientShellSocket
-  stdinPort     <- connectSocket mProfile 13160 profileStdinPort     clientStdinSocket
-  iopubPort     <- connectSocket mProfile 14270 profileIopubPort     clientIopubSocket
+  heartbeatPort <- connectSocket mProfile 110730 profileHeartbeatPort clientHeartbeatSocket
+  controlPort   <- connectSocket mProfile 111840 profileControlPort   clientControlSocket
+  shellPort     <- connectSocket mProfile 112950 profileShellPort     clientShellSocket
+  stdinPort     <- connectSocket mProfile 113160 profileStdinPort     clientStdinSocket
+  iopubPort     <- connectSocket mProfile 114270 profileIopubPort     clientIopubSocket
 
   -- Subscribe to all topics on the iopub socket!
   -- If we don't do this, then no messages get received on it.
