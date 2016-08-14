@@ -26,6 +26,7 @@ import           Text.Read (readMaybe)
 
 #if !MIN_VERSION_base(4, 8, 0)
 import           Control.Applicative ((<$>), (<*>), pure)
+import           Data.Monoid (mempty)
 #endif
 
 -- Imports from 'directory'

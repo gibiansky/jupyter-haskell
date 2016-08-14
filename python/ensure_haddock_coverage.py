@@ -40,6 +40,8 @@ def main():
                "has decreased.\nIf number of modules has decreased, edit "
                "ensure_haddock_coverage.py to be up to date."),
               file=sys.stderr)
+        print("Found files:\n" + "\n".join(name for (_, name) in stats),
+              file=sys.stderr)
         insufficient_coverage = True
 
     if insufficient_coverage:
