@@ -67,4 +67,5 @@ test:
         stack --resolver=$RESOLVER test $PEDANTIC --resolver=$RESOLVER
         stack --resolver=$RESOLVER clean
         stack --resolver=$RESOLVER haddock &>haddock.out
-        python python/ensure_haddock_coverage.py haddock.out
+        python python/ensure_haddock_coverage.py haddock.out:
+                    parallel: true
