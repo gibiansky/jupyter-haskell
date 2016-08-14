@@ -38,7 +38,7 @@ dependencies:
 
         # Set path for pkg-config to find zeromq, otherwise install of zeromq4-haskell fails.
         export PKG_CONFIG_PATH=$HOME/zeromq/lib/pkgconfig/
-        stack --resolver=$RESOLVER build --dependencies-only
+        stack --resolver=$RESOLVER build --dependencies-only --test
 
   cache_directories:
     - "~/.ghc"

@@ -116,7 +116,6 @@ import           Control.Applicative ((<|>))
 import           Control.Monad (foldM)
 import           Data.Foldable (toList)
 import           GHC.Exts (IsString)
-import           GHC.Generics (Generic)
 
 -- Imports from 'aeson'
 import           Data.Aeson (Value(..), Object, (.:), (.:?), (.=), object, FromJSON(..), ToJSON(..))
