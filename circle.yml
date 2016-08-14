@@ -11,18 +11,13 @@ dependencies:
     - mkdir -p ~/.local/bin
     - curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
 
-    - |
-      if [ ! -d "$HOME/zeromq/lib" ]; then
-          export OLDPWD=$(pwd)
-          git clone http://www.github.com/zeromq/zeromq4-1.git libzmq
-          mkdir $HOME/zeromq
-          cd libzmq
-          ./autogen.sh
-          ./configure --prefix=$HOME/zeromq
-          make
-          make install
-          cd $OLDPWD
-      fi
+    - | rm /usr/bin/asciidoc
+        git clone http://www.github.com/zeromq/zeromq4-1.git libzmq
+        cd libzmq
+        ./autogen.sh
+        ./configure
+        make
+        make install
 
     - pip install jupyter ipykernel notebook jupyter_client
 
@@ -38,12 +33,9 @@ dependencies:
 
         stack --resolver=$RESOLVER setup
 
-        # Set path for pkg-config to find zeromq, otherwise install of zeromq4-haskell fails.
-        export PKG_CONFIG_PATH=$HOME/zeromq/lib/pkgconfig/
         stack --resolver=$RESOLVER build --dependencies-only --test
 
         # Write test.sh for use in the test command
-        echo export LD_LIBRARY_PATH=$HOME/zeromq/lib > test.sh
         echo stack --resolver=$RESOLVER build >> test.sh
         echo stack --resolver=$RESOLVER exec kernel-basic install >> test.sh
         echo stack --resolver=$RESOLVER exec kernel-stdin install >> test.sh
