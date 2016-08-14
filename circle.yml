@@ -11,7 +11,8 @@ dependencies:
     - mkdir -p ~/.local/bin
     - curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
 
-    - | rm /usr/bin/asciidoc
+    - | 
+        rm /usr/bin/asciidoc
         git clone http://www.github.com/zeromq/zeromq4-1.git libzmq
         cd libzmq
         ./autogen.sh
