@@ -21,6 +21,7 @@ sockets.
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 module Jupyter.ZeroMQ (
     -- * Opening ZeroMQ Sockets
     KernelSockets(..),

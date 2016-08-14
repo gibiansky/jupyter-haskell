@@ -801,68 +801,6 @@ testClient = testMessageExchange
     , exchangeKernelOutputs = [kernelBusy, kernelIdle]
     }
   , MessageExchange
-    { exchangeName = "kernel_info_request"
-    , exchangeRequest = KernelInfoRequest
-    , exchangeReply = KernelInfoReply $
-      KernelInfo
-        { kernelProtocolVersion = "5.0"
-        , kernelBanner = T.unlines
-                           [ "Python 3.5.0 (default, Oct  3 2015, 11:20:34) "
-                           , "Type \"copyright\", \"credits\" or \"license\" for more information."
-                           , ""
-                           , "IPython 5.0.0 -- An enhanced Interactive Python."
-                           , "?         -> Introduction and overview of IPython's features."
-                           , "%quickref -> Quick reference."
-                           , "help      -> Python's own help system."
-                           , "object?   -> Details about 'object', use 'object??' for extra details."
-                           ]
-        , kernelImplementation = "ipython"
-        , kernelImplementationVersion = "5.0.0"
-        , kernelLanguageInfo = LanguageInfo
-          { languageName = "python"
-          , languageVersion = "3.5.0"
-          , languageMimetype = "text/x-python"
-          , languageFileExtension = ".py"
-          , languagePygmentsLexer = Just "ipython3"
-          , languageCodeMirrorMode = Just $
-            OptionsMode "ipython" [("version", toJSON (3 :: Int))]
-          , languageNbconvertExporter = Just "python"
-          }
-        , kernelHelpLinks = [ HelpLink
-                              { helpLinkText = "Python"
-                              , helpLinkURL = "http://docs.python.org/3.5"
-                              }
-                            , HelpLink
-                              { helpLinkText = "IPython"
-                              , helpLinkURL = "http://ipython.org/documentation.html"
-                              }
-                            , HelpLink
-                              { helpLinkText = "NumPy"
-                              , helpLinkURL = "http://docs.scipy.org/doc/numpy/reference/"
-                              }
-                            , HelpLink
-                              { helpLinkText = "SciPy"
-                              , helpLinkURL = "http://docs.scipy.org/doc/scipy/reference/"
-                              }
-                            , HelpLink
-                              { helpLinkText = "Matplotlib"
-                              , helpLinkURL = "http://matplotlib.org/contents.html"
-                              }
-                            , HelpLink
-                              { helpLinkText = "SymPy"
-                              , helpLinkURL = "http://docs.sympy.org/latest/index.html"
-                              }
-                            , HelpLink
-                              { helpLinkText = "pandas"
-                              , helpLinkURL = "http://pandas.pydata.org/pandas-docs/stable/"
-                              }
-                            ]
-        }
-    , exchangeKernelRequests = []
-    , exchangeComms = []
-    , exchangeKernelOutputs = [kernelBusy, kernelIdle]
-    }
-  , MessageExchange
     { exchangeName = "shutdown (restart)"
     , exchangeRequest = ShutdownRequest Restart
     , exchangeReply = ShutdownReply Restart

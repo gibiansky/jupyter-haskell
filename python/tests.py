@@ -240,6 +240,10 @@ class TestJupyter(unittest.TestCase):
                 {"execution_state": "idle"},
             ])
 
+    def test_protocol_version(self):
+        """Test that the messaging protocol version is as expected."""
+        self.assertEqual(jupyter_client.protocol_version, "5.0")
+
 
 if __name__ == '__main__':
     # Make sure all kernelspecs are installed before starting the test suite.

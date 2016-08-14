@@ -14,6 +14,7 @@ For user-facing documentation, please check out "Jupyter.Install" instead.
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 module Jupyter.Install.Internal where
 
 -- Imports from 'base'
