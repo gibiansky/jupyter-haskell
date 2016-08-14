@@ -41,8 +41,6 @@ and provide empty 'Comm' message handlers.)
 For more information, please read the
 <https://jupyter-client.readthedocs.io/en/latest/messaging.html full Jupyter messaging specification>.
 -}
-
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -118,7 +116,6 @@ module Jupyter.Messages (
 import           Control.Applicative ((<|>))
 import           Control.Monad (foldM)
 import           Data.Foldable (toList)
-import           Data.Typeable (Typeable)
 import           GHC.Exts (IsString)
 import           GHC.Generics (Generic)
 
@@ -1400,7 +1397,7 @@ data MimeType = MimePlainText -- ^ A @text/plain@ mimetype for text
               | MimeSvg -- ^ A @image/svg+xml@ mimetype for SVG images
               | MimeLatex -- ^ A @text/latex@ mimetype for LaTeX
               | MimeJavascript -- ^ A @application/javascript@ mimetype for Javascript
-  deriving (Eq, Ord, Show, Typeable, Generic)
+  deriving (Eq, Ord, Show)
 
 -- | Convert a 'MimeType' into its standard string representation.
 --
