@@ -27,18 +27,18 @@ dependencies:
     - pip install jupyter ipykernel notebook jupyter_client
 
   override:
-    # Set path for pkg-config to find zeromq, otherwise install of zeromq4-haskell fails.
-    - export PKG_CONFIG_PATH=$HOME/zeromq/lib/pkgconfig/
     - |
         if [[ $CIRCLE_NODE_INDEX -eq 0 ]]; then
             export RESOLVER=lts-6.11
-            export PEDANTIC=--pedantic
         else
             export RESOLVER=nightly-2016-08-13
-            export PEDANTIC=
         fi
-    - stack --resolver=$RESOLVER setup
-    - stack --resolver=$RESOLVER build --dependencies-only
+
+        stack --resolver=$RESOLVER setup
+
+        # Set path for pkg-config to find zeromq, otherwise install of zeromq4-haskell fails.
+        export PKG_CONFIG_PATH=$HOME/zeromq/lib/pkgconfig/
+        stack --resolver=$RESOLVER build --dependencies-only
 
   cache_directories:
     - "~/.ghc"
@@ -49,13 +49,22 @@ dependencies:
 ## Customize test commands
 test:
   override:
-    - export LD_LIBRARY_PATH=$HOME/zeromq/lib
-    - stack --resolver=$RESOLVER build
-    - stack --resolver=$RESOLVER exec kernel-basic install
-    - stack --resolver=$RESOLVER exec kernel-stdin install
-    - stack --resolver=$RESOLVER exec kernel-calculator install
-    - stack --resolver=$RESOLVER exec python python/tests.py
-    - stack --resolver=$RESOLVER test $PEDANTIC --resolver=$RESOLVER
-    - stack --resolver=$RESOLVER clean
-    - stack --resolver=$RESOLVER haddock &>haddock.out
-    - python python/ensure_haddock_coverage.py haddock.out
+    - |
+        if [[ $CIRCLE_NODE_INDEX -eq 0 ]]; then
+            export RESOLVER=lts-6.11
+            export PEDANTIC=--pedantic
+        else
+            export RESOLVER=nightly-2016-08-13
+            export PEDANTIC=
+        fi
+
+        export LD_LIBRARY_PATH=$HOME/zeromq/lib
+        stack --resolver=$RESOLVER build
+        stack --resolver=$RESOLVER exec kernel-basic install
+        stack --resolver=$RESOLVER exec kernel-stdin install
+        stack --resolver=$RESOLVER exec kernel-calculator install
+        stack --resolver=$RESOLVER exec python python/tests.py
+        stack --resolver=$RESOLVER test $PEDANTIC --resolver=$RESOLVER
+        stack --resolver=$RESOLVER clean
+        stack --resolver=$RESOLVER haddock &>haddock.out
+        python python/ensure_haddock_coverage.py haddock.out
