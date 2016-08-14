@@ -62,11 +62,11 @@ randoms n = replicateM n random
 
 -- | Generate a single random UUID.
 random :: IO UUID
-random = UUID . show <$> nextRandom
+random = fmap (UUID . show) nextRandom
 
 -- Allows reading and writing UUIDs as Strings in JSON.
 instance FromJSON UUID where
-  parseJSON val@(String _) = UUID <$> parseJSON val
+  parseJSON val@(String _) = fmap UUID (parseJSON val)
 
   -- UUIDs must be Strings.
   parseJSON _ = mzero

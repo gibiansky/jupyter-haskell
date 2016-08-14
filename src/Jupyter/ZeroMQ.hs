@@ -22,6 +22,7 @@ sockets.
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE CPP #-}
 module Jupyter.ZeroMQ (
     -- * Opening ZeroMQ Sockets
     KernelSockets(..),
@@ -56,6 +57,10 @@ import           Data.Char (isNumber)
 import           Data.Monoid ((<>))
 import           Text.Read (readMaybe)
 import           Data.Typeable (Typeable)
+
+#if !MIN_VERSION_base(4, 8, 0)
+import           Control.Applicative ((<$>))
+#endif
 
 -- Imports from 'bytestring'
 import           Data.ByteString (ByteString)
