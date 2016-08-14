@@ -3,7 +3,7 @@ version:             0.9.0
 synopsis:            A library for creating and using Jupyter kernels.
 
 description:         An implementation of the Jupyter messaging protocol, used to implement Jupyter kernels in Haskell or communicate with existing Jupyter kernels via the messaging protocol.
-homepage:            http://github.com/gibiansky/haskell-jupyter
+homepage:            http://github.com/gibiansky/jupyter-haskell
 license:             MIT
 license-file:        LICENSE
 author:              Andrew Gibiansky
@@ -11,6 +11,7 @@ maintainer:          andrew.gibiansky@gmail.com
 category:            Development
 build-type:          Simple
 cabal-version:       >=1.16
+extra-source-files:  README.md
 
 source-repository head
   type:     git
