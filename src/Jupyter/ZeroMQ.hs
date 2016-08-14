@@ -478,7 +478,7 @@ connectSocket mProfile startPort accessor sock = do
     findOpenPort 0 _ = fail "fatal error (Jupyter.ZeroMQ): Could not find port to connect to."
     findOpenPort triesLeft tryPort =
       let handler :: ZMQError -> ZMQ z ()
-          handler = const $ findOpenPort (triesLeft - 1) (tryPort + 1)
+          handler err = liftIO (print err) >> findOpenPort (triesLeft - 1) (tryPort + 1)
           address = "tcp://127.0.0.1:" ++ show (tryPort :: Int)
       in flip catch handler $ do
         -- `connect` allows you to connect multiple sockets to the same port. We don't want that! So, in

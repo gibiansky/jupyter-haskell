@@ -71,5 +71,6 @@ runInstall =
 runKernel :: FilePath -> IO ()
 runKernel profilePath = do
   Just profile <- readProfile profilePath
+  print profile
   serve profile defaultCommHandler $
     defaultClientRequestHandler profile $ simpleKernelInfo "Basic"
