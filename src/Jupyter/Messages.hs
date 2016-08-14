@@ -46,7 +46,6 @@ For more information, please read the
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE CPP #-}
 module Jupyter.Messages (
     -- * Client Requests (Shell channel)
     ClientRequest(..),
@@ -118,11 +117,6 @@ import           Control.Monad (foldM)
 import           Data.Foldable (toList)
 import           GHC.Exts (IsString)
 import           GHC.Generics (Generic)
-
-#if !MIN_VERSION_base(4, 8, 0)
-import           Control.Applicative ((<$>), (<*>), pure)
-import           Data.Monoid (Monoid(..))
-#endif
 
 -- Imports from 'aeson'
 import           Data.Aeson (Value(..), Object, (.:), (.:?), (.=), object, FromJSON(..), ToJSON(..))

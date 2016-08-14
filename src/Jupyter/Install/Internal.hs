@@ -10,11 +10,8 @@ Portability : POSIX
 This module exposes the internal implementation for "Jupyter.Install".
 For user-facing documentation, please check out "Jupyter.Install" instead.
 -}
-
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DeriveDataTypeable #-}
 module Jupyter.Install.Internal where
 
 -- Imports from 'base'
@@ -24,12 +21,6 @@ import           Data.Maybe (isJust)
 import           System.Environment (getExecutablePath)
 import           System.IO (withFile, IOMode(..))
 import           Text.Read (readMaybe)
-import           Data.Typeable (Typeable)
-
-#if !MIN_VERSION_base(4, 8, 0)
-import           Control.Applicative ((<$>), (<*>), pure)
-import           Data.Monoid (mempty)
-#endif
 
 -- Imports from 'directory'
 import           System.Directory (findExecutable, getTemporaryDirectory, removeDirectoryRecursive,
@@ -101,7 +92,7 @@ data InstallUser = InstallLocal   -- ^ Install this kernel just for this user.
 
 -- | An exception type for expected exceptions whenever the @jupyter kernelspec@ command is used.
 newtype JupyterKernelspecException = JupyterKernelspecException Text
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show)
 
 -- | 'JupyterKernelspecException's can be thrown when an expected failure occurs during @jupyter kernelspec@
 -- command invocation.

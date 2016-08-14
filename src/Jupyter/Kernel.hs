@@ -26,7 +26,6 @@ the <https://github.com/gibiansky/jupyter-haskell/tree/master/examples examples>
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE CPP #-}
 module Jupyter.Kernel (
   -- * Serving kernels
   serve,
@@ -50,10 +49,6 @@ import           Control.Exception (bracket, catch, finally)
 import           Control.Monad (forever)
 import           System.Exit (exitSuccess)
 import           System.IO (hPutStrLn, stderr)
-
-#if !MIN_VERSION_base(4, 8, 0)
-import           Data.Monoid (mempty)
-#endif
 
 -- Imports from 'bytestring'
 import           Data.ByteString (ByteString)

@@ -21,8 +21,6 @@ sockets.
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE CPP #-}
 module Jupyter.ZeroMQ (
     -- * Opening ZeroMQ Sockets
     KernelSockets(..),
@@ -56,12 +54,6 @@ import           Control.Monad (void, unless)
 import           Data.Char (isNumber)
 import           Data.Monoid ((<>))
 import           Text.Read (readMaybe)
-import           Data.Typeable (Typeable)
-
-#if !MIN_VERSION_base(4, 8, 0)
-import           Control.Applicative ((<$>))
-import           Data.Monoid (mempty)
-#endif
 
 -- Imports from 'bytestring'
 import           Data.ByteString (ByteString)
@@ -218,7 +210,7 @@ transportToProtocolString TCP = "tcp"
 --
 -- See 'messagingError'.
 data MessagingException = MessagingException String
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show)
 
 -- | An 'Exception' instance allows 'MessagingException' to be thrown as an exception.
 instance Exception MessagingException

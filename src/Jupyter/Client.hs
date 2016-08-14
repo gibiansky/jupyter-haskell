@@ -71,7 +71,6 @@ directory, and more information about the client and kernel interfaces can be fo
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE CPP #-}
 module Jupyter.Client (
     -- * Communicating with Clients
     Client,
@@ -96,10 +95,6 @@ module Jupyter.Client (
 import           Control.Exception (bracket, catch)
 import           Control.Monad (forever)
 import           Data.Maybe (fromMaybe)
-
-#if !MIN_VERSION_base(4, 8, 0)
-import           Control.Applicative (Applicative)
-#endif
 
 -- Imports from 'bytestring'
 import           Data.ByteString (ByteString)
