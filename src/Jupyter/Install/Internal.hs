@@ -92,7 +92,7 @@ data InstallResult = InstallSuccessful       -- ^ Kernelspec installation was su
 
 -- | Whether to install the kernel globally or just for the current user.
 --
--- This corresponds to the @--user@ flag for @jupyter kernelspec install@. 
+-- This corresponds to the @--user@ flag for @jupyter kernelspec install@.
 data InstallUser = InstallLocal   -- ^ Install this kernel just for this user.
                  | InstallGlobal  -- ^ Install this kernel globally.
   deriving (Eq, Ord, Show)
@@ -249,7 +249,7 @@ prepareKernelspecDirectory kernelspec dir = do
 -- | Install a kernelspec using @jupyter kernelspec install@.
 --
 -- Throws a 'JupyterKernelspecException' on failure.
-installKernelspec :: InstallUser -- ^ Whether this kernel should be installed with or without --user 
+installKernelspec :: InstallUser -- ^ Whether this kernel should be installed with or without @--user@
                   -> FilePath    -- ^ Path to the @jupyter@ executable
                   -> Kernelspec  -- ^ Kernelspec to install
                   -> IO ()
@@ -300,7 +300,7 @@ parseVersion versionStr =
 findKernel :: Text -> IO (Maybe Kernelspec)
 findKernel language = do
   Kernelspecs kernelspecs <- findKernelsInternal
-  maybe (return Nothing) 
+  maybe (return Nothing)
         (fmap Just . checkKernelspecFiles)
         (Map.lookup language kernelspecs)
 

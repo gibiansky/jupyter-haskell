@@ -458,15 +458,15 @@ testClient = testMessageExchange
     }
   , MessageExchange
     { exchangeName = "execute_request (stream output)"
-    , exchangeRequest = ExecuteRequest "import sys\nprint(sys.version.split()[0])"
+    , exchangeRequest = ExecuteRequest "import sys\nprint(sys.version.split()[0][:3])"
                           defaultExecuteOptions
     , exchangeReply = ExecuteReply (execCount + 1) ExecuteOk
     , exchangeKernelRequests = []
     , exchangeComms = []
     , exchangeKernelOutputs = [ kernelBusy
                               , ExecuteInputOutput (execCount + 1)
-                                  "import sys\nprint(sys.version.split()[0])"
-                              , StreamOutput StreamStdout "3.5.0\n"
+                                  "import sys\nprint(sys.version.split()[0][:3])"
+                              , StreamOutput StreamStdout "3.5\n"
                               , kernelIdle
                               ]
     }

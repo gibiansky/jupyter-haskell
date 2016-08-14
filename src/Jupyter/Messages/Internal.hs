@@ -76,7 +76,7 @@ newtype Username = Username Text
 
 -- | The type of a message, internally stored as a string.
 --
--- Examples include @execute_request@, @comm_open@, and @display_data@. 
+-- Examples include @execute_request@, @comm_open@, and @display_data@.
 newtype MessageType = MessageType { messageTypeText :: Text }
   deriving (Eq, Ord, Show, FromJSON, ToJSON, IsString)
 
@@ -97,6 +97,10 @@ class ToJSON v => IsMessage v where
   -- If this message type does not correspond to one of the constructors for the data type @v@, then
   -- return 'Nothing'. Otherwise, return a parser that parses the message body into the given
   -- datatype.
+  --
+  -- This is a slightly unusual but necessary interface, because the message type and the message body
+  -- come in separate bytestrings, as they are separate blobs sent on the communication sockets. Thus,
+  -- we must look first at the message type, and choose the JSON parser based on the message type.
   parseMessageContent :: MessageType -> Maybe (Object -> Parser v)
 
 -- | Provide an 'IsMessage' instance for the sum of two types which have 'IsMessage' instances.
