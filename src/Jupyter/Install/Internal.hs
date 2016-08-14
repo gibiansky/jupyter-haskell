@@ -18,11 +18,12 @@ module Jupyter.Install.Internal where
 
 -- Imports from 'base'
 import           Control.Exception (Exception, IOException, catch, throwIO)
-import           Control.Monad (forM_, void, unless, when, foldM)
+import           Control.Monad (void, unless, when, foldM)
 import           Data.Maybe (isJust)
 import           System.Environment (getExecutablePath)
 import           System.IO (withFile, IOMode(..))
 import           Text.Read (readMaybe)
+import           Data.Typeable (Typeable)
 
 #if !MIN_VERSION_base(4, 8, 0)
 import           Control.Applicative ((<$>), (<*>), pure)
@@ -99,7 +100,7 @@ data InstallUser = InstallLocal   -- ^ Install this kernel just for this user.
 
 -- | An exception type for expected exceptions whenever the @jupyter kernelspec@ command is used.
 newtype JupyterKernelspecException = JupyterKernelspecException Text
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Typeable)
 
 -- | 'JupyterKernelspecException's can be thrown when an expected failure occurs during @jupyter kernelspec@
 -- command invocation.

@@ -90,7 +90,7 @@ testFindingKernelspecs = testCase "Finding Kernelspecs" $ do
 
 -- | Test that the @basic@ kernel responds to all the standard messages with empty replies.
 testBasic :: TestTree
-testBasic = 
+testBasic =
   testMessageExchange "Basic Kernel" (commandFromKernelspec "basic") "" $
     \_ _ profile ->
       [ MessageExchange
@@ -348,7 +348,7 @@ commandFromKernelspec name = do
   case kernel of
     Nothing   -> fail $ "Could not find kernelspec " ++ T.unpack name
     Just spec -> return $ kernelspecCommand spec ""
-  
+
 -- | Start the IPython kernel and return a 'ProcessHandle' for the started process.
 startIPythonKernel :: KernelProfile -> IO ProcessHandle
 startIPythonKernel = startKernel $ \profileFile -> ["python", "-m", "ipykernel", "-f", profileFile]
@@ -359,8 +359,7 @@ startIPythonKernel = startKernel $ \profileFile -> ["python", "-m", "ipykernel",
 -- Namely, the exceptions should be reraised (once) on the main thread.
 testHandlerExceptions :: TestTree
 testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
-  let exception :: Show b => a -> b -> IO c
-      exception = const $ const $ throwIO HandlerException
+  let exception = const $ const $ throwIO HandlerException
       returnStdin = const . const . return $ InputReply "<>"
       handlerKernelRequestException = ClientHandlers exception defaultClientCommHandler defaultKernelOutputHandler
       handlerCommException = ClientHandlers returnStdin exception defaultKernelOutputHandler
@@ -371,7 +370,7 @@ testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
   step "...exception on kernel output..."
   raisesHandlerException $ runIPython handlerKernelOutputException $ \_ _ connection -> do
     void $ sendClientRequest connection ConnectRequest
-    -- Since we might not get the kernel output until the connect reply, wait for 
+    -- Since we might not get the kernel output until the connect reply, wait for
     -- a while to ensure we get the kernel output before the client exits. This doesn't
     -- slow down the test suite since an exception gets thrown and we exit this thread
     -- without finishing the waiting.

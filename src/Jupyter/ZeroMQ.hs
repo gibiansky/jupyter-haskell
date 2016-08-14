@@ -7,6 +7,9 @@ Maintainer  : andrew.gibiansky@gmail.com
 Stability   : stable
 Portability : POSIX
 
+This is a primarily internal module; users of the @jupyter@ package do not need to import or
+use functions or data types from this module.
+
 This module provides a low-level interface to the Jupyter ZeroMQ sockets, message encoding, and
 message decoding. The primary interface consists of 'withKernelSockets' and 'withClientSockets', which
 create the sets of sockets needed to serve a kernel or run a client, and 'sendMessage' and 'receiveMessage',
@@ -51,6 +54,7 @@ import           Control.Monad (void, unless)
 import           Data.Char (isNumber)
 import           Data.Monoid ((<>))
 import           Text.Read (readMaybe)
+import           Data.Typeable (Typeable)
 
 -- Imports from 'bytestring'
 import           Data.ByteString (ByteString)
@@ -206,8 +210,8 @@ transportToProtocolString TCP = "tcp"
 -- | Exception to throw when the messaging protocol is not being observed.
 --
 -- See 'messagingError'.
-data MessagingException = MessagingException String 
-  deriving (Eq, Ord, Show)
+data MessagingException = MessagingException String
+  deriving (Eq, Ord, Show, Typeable)
 
 -- | An 'Exception' instance allows 'MessagingException' to be thrown as an exception.
 instance Exception MessagingException
@@ -216,7 +220,7 @@ instance Exception MessagingException
 --
 -- Should be used when the messaging protocol is not being properly observed or in other
 -- unrecoverable situations.
-messagingError :: MonadIO m 
+messagingError :: MonadIO m
                => String -- ^ Module name in which error happened.
                -> String -- ^ Error message.
                -> m a
@@ -300,7 +304,7 @@ readProfile path = decode <$> LBS.readFile path
 -- | Write a 'KernelProfile' to a JSON file, which can be passed as the connection file to a
 -- starting kernel.
 writeProfile :: KernelProfile -> FilePath -> IO ()
-writeProfile profile path = LBS.writeFile path (encode profile) 
+writeProfile profile path = LBS.writeFile path (encode profile)
 
 -- | Create and bind all ZeroMQ sockets used for serving a Jupyter kernel. Store info about the
 -- created sockets in a 'KernelProfile', and then run a 'ZMQ' action, providing the used
@@ -385,7 +389,7 @@ withClientSockets mProfile callback = runZMQ $ do
   -- easily wait for the kernel to connect, by waiting for one accepted connection event per socket.
   -- Once we receive that, we can turn off monitoring. (Passing True listens for an event; False turns
   -- off monitoring.)
-  -- 
+  --
   -- You can't use 'mapM' because the sockets have different types, e.g. Socket z Req vs Socket z Dealer.
   monitors <- sequence
                 [ monitor [ConnectedEvent] clientHeartbeatSocket
@@ -403,7 +407,7 @@ withClientSockets mProfile callback = runZMQ $ do
   iopubPort     <- connectSocket mProfile 14270 profileIopubPort     clientIopubSocket
 
   -- Subscribe to all topics on the iopub socket!
-  -- If we don't do this, then no messages get received on it. 
+  -- If we don't do this, then no messages get received on it.
   subscribe clientIopubSocket ""
 
   let profile = KernelProfile
@@ -649,7 +653,7 @@ sendMessage hmacKey sock header content = do
                        , "version" .= ("5.0" :: String)
                        , "msg_type" .= messageType
                        ]
-    
+
 
 -- | Encode JSON to a strict bytestring.
 encodeStrict :: ToJSON a => a -> ByteString

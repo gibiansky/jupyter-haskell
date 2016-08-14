@@ -12,10 +12,10 @@ The protocol defines several ZeroMQ sockets that are used for communication betw
 as well as the format of the data that is sent on each of those sockets.
 
 To summarize briefly, the messaging protocol defines four types of communication:
-  * Client to kernel requests ('ClientRequest') and replies ('KernelReply')
-  * Kernel output publication to all clients ('KernelOutput')
-  * Kernel to client requests ('KernelRequest') and replies ('ClientReply')
-  * Free-form "comm" messages between kernels and clients ('Comm')
+1. Client to kernel requests ('ClientRequest') and replies ('KernelReply')
+2. Kernel output publication to all clients ('KernelOutput')
+3. Kernel to client requests ('KernelRequest') and replies ('ClientReply')
+4. Free-form "comm" messages between kernels and clients ('Comm')
 
 Client to kernel requests and replies are sent on two sockets called the /shell/ and /control/ sockets, but 
 when using the @jupyter-kernel@ package these two sockets can be treated as a single communication channel,
