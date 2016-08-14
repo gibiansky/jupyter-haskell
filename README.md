@@ -65,13 +65,14 @@ The following screenshots are examples of the Jupyter notebook, taken from [thei
 # Stack (recommended)
 stack install jupyter
 
-# Cabal
+# Cabal (not recommended)
 cabal install jupyter
 ```
 
 ### ZeroMQ Installation
-`jupyter` depends on the `zeromq4-haskell` package, which requires ZeroMQ to be installed. Depending
-on your platform, this may require compiling from source. If you use a Mac, it is recommended that
+`jupyter` depends on the [`zeromq4-haskell`](https://hackage.haskell.org/package/zeromq4-haskell)
+ package, which requires ZeroMQ to be installed. Depending
+on your platform, this may require compiling ZeroMQ from source. If you use a Mac, it is recommended that
 you install Homebrew (if you have not installed it already) and use it to install ZeroMQ.
 
 Installation Commands:
@@ -91,7 +92,8 @@ sudo ldconfig
 
 The [Jupyter messaging protocol](https://jupyter-client.readthedocs.io/en/latest/messaging.html)
 is centered around a request-reply pattern, with clients sending requests to kernels and kernels
-replying to every request with a reply. Although that is the preliminary communication channel, there are five different messaging patterns that happen between clients and kernels:
+replying to every request with a reply. Although that is the primary communication pattern,
+there are different messaging patterns that happen between clients and kernels:
 - **Request-Reply**: Clients send requests to kernels, and kernels reply with precisely one response to every request.
 - **Outputs**: Kernels broadcast outputs to all connected clients. (A client request can have only reply, as mentioned previously, but can also trigger any number of outputs being sent separately.)
 - **Kernel Requests**: Kernels can send requests to individual clients; this is currently used *only* for querying for standard input, such as when the Python kernel calls `raw_input()` or the Haskell kernel calls `getLine`. (Requests for input are sent from the kernel to the client, and clients get the input from the user and send it to the kernel.)
@@ -137,7 +139,7 @@ data KernelOutput
 -- | Which stream to write to
 data Stream = StreamStdout | StreamStderr
 
--- | 
+-- | Display data mime bundle, with one value at most per mimetype.
 newtype DisplayData = DisplayData (Map MimeType Text)
 
 data MimeType
@@ -147,9 +149,9 @@ data MimeType
   | ...
 ```
 
-The other message types are represented by the [`KernelRequest`](FAKE) data type (for requests from
-the kernel to a single client, e.g. for standard input), [`ClientReply`](FAKE) (for replies to
-`KernelRequest` messages), and [`Comm`](FAKE) messages (for arbitrary communication between
+The other message types are represented by the [`KernelRequest`](FAKE) data type (requests from
+the kernel to a single client, e.g. for standard input), [`ClientReply`](FAKE) (replies to
+[`KernelRequest`](FAKE) messages), and [`Comm`](FAKE) messages (arbitrary unstructured communication between
 frontends and servers).
 
 ## Creating Kernels
@@ -446,13 +448,17 @@ action returned is run in `IO`.
 
 To send requests to kernels (and receive replies), construct the appropriate [`Client`](FAKE)
 action; these are thin wrappers around `IO` that allow you to use the [`sendClientComm`](FaKE) and
-more importantly [`sendClientRequest`](FAKE) to communicate with kernels. [`sendClientRequest`](FAKE)
-can be used with any [`ClientRequest`], as in:
+more importantly [`sendClientRequest`](FAKE) to communicate with kernels.
+
+Before [`sendClientRequest`](FAKE) can be used, though, the connection to the kernel must be verified.
+This is done by [`connectKernel`](FAKE), which blocks until the kernel connects to the client and
+returns a `KernelConnection` for use with [`sendClientRequest`](FAKE). Once we have a `KernelConnection`,
+we can query the kernel, as in:
 
 ```haskell
-getKernelInfoReply :: Client KernelInfo
-getKernelInfoReply = do
-  KernelInfoReply info <- sendClientRequest KernelInfoRequest
+getKernelInfoReply :: KernelConnection -> Client KernelInfo
+getKernelInfoReply connection = do
+  KernelInfoReply info <- sendClientRequest connection KernelInfoRequest
   return info
 ```
 
@@ -463,7 +469,7 @@ For example, the [`KernelInfo`](FAKE) for the `python3` kernel can be obtained a
 import           Control.Monad.IO.Class (MonadIO(liftIO))
 import           System.Process (spawnProcess)
 
-import           Jupyter.Client (runClient, sendClientRequest, ClientHandlers(..),
+import           Jupyter.Client (runClient, sendClientRequest, ClientHandlers(..), connectKernel,
                                  defaultClientCommHandler, findKernel, writeProfile, Kernelspec(..))
 import           Jupyter.Messages (ClientRequest(KernelInfoRequest), KernelReply(KernelInfoReply),
                                    KernelRequest(InputRequest), ClientReply(InputReply))
@@ -483,7 +489,8 @@ main = do
     _ <- liftIO $ spawnProcess (head command) (tail command)
 
     -- Send a kernel info request and get the reply
-    KernelInfoReply info <- sendClientRequest KernelInfoRequest
+    connection <- connectKernel
+    KernelInfoReply info <- sendClientRequest connection KernelInfoRequest
     liftIO $ print info
 
 handlers :: ClientHandlers
@@ -501,8 +508,10 @@ handlers = ClientHandlers {
   }
 ```
 
-This full example is in the [`examples/client-kernel-info` directory](FAKE), and can be built with `stack build`,
-and executed with `stack exec client-kernel-info`. (It will work if the `python3` kernel is
+This full example is in the
+[`examples/client-kernel-info` directory](https://github.com/gibiansky/jupyter-haskell/tree/master/examples/client-kernel-info),
+and can be built with `stack build jupyter:client-kernel-info`, and executed
+with `stack exec client-kernel-info`. (It will work if the `python3` kernel is
 installed, but not otherwise!)
 
 
