@@ -72,6 +72,7 @@ runInstall =
 runKernel :: FilePath -> IO ()
 runKernel profilePath = do
   Just profile <- readProfile profilePath
+  print profile
   serve profile defaultCommHandler $ clientRequestHandler profile
 
 -- | Client request handler which acts in all ways as the default, except for execute requests,
