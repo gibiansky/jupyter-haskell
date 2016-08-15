@@ -64,7 +64,7 @@ test-suite test-jupyter
                     Jupyter.Test.MessageExchange
                     Jupyter.Test.Utils
 
-  build-depends: base >= 4 && < 5,
+  build-depends: base >= 4.8 && < 5,
                  tasty >= 0.7,
                  tasty-hunit >= 0.9,
                  extra >= 1.1,
@@ -86,7 +86,7 @@ executable kernel-basic
     default-language:   Haskell2010
     hs-source-dirs:     examples/basic
     main-is:            Main.hs
-    build-depends:      base >= 4.6, 
+    build-depends:      base >= 4.8,
                         text >= 1.2,
                         jupyter
 
@@ -95,7 +95,7 @@ executable kernel-calculator
     hs-source-dirs:     examples/calculator
     main-is:            Main.hs
     other-modules:      Calculator.Handler
-    build-depends:      base >= 4.6, 
+    build-depends:      base >= 4.8,
                         text >= 1.2,
                         jupyter
 
@@ -103,7 +103,7 @@ executable kernel-stdin
     default-language:   Haskell2010
     hs-source-dirs:     examples/stdin
     main-is:            Main.hs
-    build-depends:      base >= 4.6, 
+    build-depends:      base >= 4.8,
                         text >= 1.2,
                         jupyter
 
@@ -111,7 +111,7 @@ executable client-kernel-info
     default-language:   Haskell2010
     hs-source-dirs:     examples/client-kernel-info
     main-is:            Main.hs
-    build-depends:      base >= 4.6, 
+    build-depends:      base >= 4.8,
                         process >= 1.2,
                         transformers >= 0.3,
                         jupyter
