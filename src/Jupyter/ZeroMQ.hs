@@ -80,8 +80,8 @@ import           Data.Digest.Pure.SHA as SHA
 -- Imports from 'zeromq4-haskell'
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
                                       Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
-                                      Sender, lastEndpoint, bind, unbind, connect, subscribe,
-                                      ZMQError, setIdentity, restrict, monitor, EventType(..), setLinger)
+                                      Sender, lastEndpoint, bind, connect, subscribe, setIdentity,
+                                      restrict, monitor, EventType(..), setLinger, message, close)
 
 -- Imports from 'jupyter'
 import           Jupyter.Messages.Internal (MessageHeader(..), IsMessage(..), Username(..))
@@ -358,6 +358,27 @@ withClientSockets :: Maybe KernelProfile -- ^ Optionally, specify how the ZeroMQ
                                                                                -- ZeroMQ sockets.
                    -> IO a
 withClientSockets mProfile callback = runZMQ $ do
+  -- Create the kernel profile to be used. If we need to, find open ports to use.
+  profile <- case mProfile of
+    Just p -> return p 
+    Nothing -> do
+      let startPorts = [110730, 111840, 112950, 113160, 114270]
+      ports <- mapM (findOpenPort 100) startPorts
+      case sequence ports of
+        Nothing -> fail "Jupyter.ZeroMQ: Could not find open port in 100 tries!"
+        Just [port1, port2, port3, port4, port5] ->
+          return KernelProfile
+            { profileTransport = TCP
+            , profileIp = "127.0.0.1"
+            , profileHeartbeatPort = port1
+            , profileControlPort = port2
+            , profileShellPort = port3
+            , profileStdinPort = port4
+            , profileIopubPort = port5
+            , profileSignatureKey = ""
+            }
+        Just _ -> fail "Jupyter.ZeroMQ: Too many ports"
+
   clientHeartbeatSocket <- socket Req
   clientControlSocket   <- socket Dealer
   clientShellSocket     <- socket Dealer
@@ -399,26 +420,17 @@ withClientSockets mProfile callback = runZMQ $ do
                 ]
   let clientWaitForConnections = mapM_ ($ True) monitors
 
-  heartbeatPort <- connectSocket mProfile 110730 profileHeartbeatPort clientHeartbeatSocket
-  controlPort   <- connectSocket mProfile 111840 profileControlPort   clientControlSocket
-  shellPort     <- connectSocket mProfile 112950 profileShellPort     clientShellSocket
-  stdinPort     <- connectSocket mProfile 113160 profileStdinPort     clientStdinSocket
-  iopubPort     <- connectSocket mProfile 114270 profileIopubPort     clientIopubSocket
+  -- Connect the sockets to all the ports.
+  let address accessor = "tcp://127.0.0.1:" ++ show (accessor profile)
+  connect clientHeartbeatSocket (address profileHeartbeatPort)
+  connect clientControlSocket (address profileControlPort)
+  connect clientShellSocket (address profileShellPort)
+  connect clientStdinSocket (address profileStdinPort)
+  connect clientIopubSocket (address profileIopubPort)
 
   -- Subscribe to all topics on the iopub socket!
   -- If we don't do this, then no messages get received on it.
   subscribe clientIopubSocket ""
-
-  let profile = KernelProfile
-        { profileTransport = maybe TCP profileTransport mProfile
-        , profileIp = maybe "127.0.0.1" profileIp mProfile
-        , profileHeartbeatPort = heartbeatPort
-        , profileControlPort = controlPort
-        , profileShellPort = shellPort
-        , profileStdinPort = stdinPort
-        , profileIopubPort = iopubPort
-        , profileSignatureKey = maybe "" profileSignatureKey mProfile
-        }
 
   -- Ensure that all monitors are closed after we run our action. If we don't,
   -- ZMQ will not be able to shutdown because the monitor sockets linger.
@@ -444,52 +456,23 @@ extractAddress mProfile accessor =
     , maybe "*" (show . accessor) mProfile
     ]
 
--- | Connect the provided socket to a port.
---
--- The port to connect to is determined as follows:
---
--- 1. If a 'KernelProfile' is provided, use the given @'KernelProfile' -> 'Port'@ accessor to compute
--- the port that the socket should bind to, and use it (along with the transport mechanism and IP)
--- to generate an address to connect to. If connecting to this address fails, an exception is
--- raised.
---
--- 2. If no 'KernelProfile' is provided, attempt to bind to the provided default 'Port'.
---
--- 3. If binding to the default 'Port' fails, increment the port by one, and try again. Repeat this
--- until either it succeeds, or until a fixed number of tries has been attempted.
---
--- Returns the port to which the socket was connected.
-connectSocket :: forall z t. Maybe KernelProfile -- ^ Optional 'KernelProfile'
-              -> Port -- ^ Default port to try, if no 'KernelProfile' provided
-              -> (KernelProfile -> Port) -- ^ Accessor function to get desired port from profile
-              -> Socket z t -- ^ Socket to connect
-              -> ZMQ z Port -- ^ Returns port to which socket connected
-connectSocket mProfile startPort accessor sock = do
-  case mProfile of
-    Just _  -> connect sock (extractAddress mProfile accessor)
-    Nothing -> findOpenPort 100 startPort
-
-  endpoint sock
+-- | Find an open port, starting at a given port.
+findOpenPort :: Int -- ^ Number of tries to find a port
+             -> Int -- ^ Initial port to try
+             -> ZMQ z (Maybe Int)
+findOpenPort tries startPort = do
+  sock <- socket Req
+  finally (go sock tries startPort) (close sock)
 
   where
-    -- Try binding to a port. If it fails, try the next one (up to a fixed limit).
-    -- Any ZMQ error is treated as a retriable failure, regardless of the error code or message.
-    findOpenPort :: Int -> Int -> ZMQ z ()
-    findOpenPort 0 _ = fail "fatal error (Jupyter.ZeroMQ): Could not find port to connect to."
-    findOpenPort triesLeft tryPort =
-      let handler :: ZMQError -> ZMQ z ()
-          handler err = liftIO (print err) >> findOpenPort (triesLeft - 1) (tryPort + 1)
-          address = "tcp://127.0.0.1:" ++ show (tryPort :: Int)
-      in flip catch handler $ do
-        -- `connect` allows you to connect multiple sockets to the same port. We don't want that! So, in
-        -- order to find out if we have a kernel already running on the port we're about to connect to, we
-        -- `bind` the socket. If the bind fails, that means the port is used; if it doesn't fail, the port
-        -- is open, so we unbind and then connect to it. This is pretty hacky and not thread-safe, but
-        -- should not cause any issues in practice.
-        bind sock address
-        unbind sock address
-        connect sock address
-
+    go _ 0 _ = return Nothing
+    go sock triesLeft nextPort =
+      (do
+         bind sock ("tcp://127.0.0.1:" ++ show nextPort)
+         return (Just nextPort)) `catch`
+      (\zmqErr -> if message zmqErr == "Address already in use"
+                    then go sock (triesLeft - 1) (nextPort + 1)
+                    else liftIO (throwIO zmqErr))
 
 -- | Bind a socket to a port.
 --
