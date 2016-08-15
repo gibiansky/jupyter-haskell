@@ -48,7 +48,8 @@ library
                        SHA             >=1.6,
                        monad-control   >=1.0,
                        async           >= 2.0,
-                       exceptions      >= 0.8
+                       exceptions      >= 0.8,
+                       random          >= 1.1
 
 test-suite test-jupyter
   default-language: Haskell2010

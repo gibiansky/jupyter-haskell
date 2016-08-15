@@ -52,8 +52,12 @@ module Jupyter.ZeroMQ (
 import           Control.Exception (throwIO, Exception, AsyncException(ThreadKilled))
 import           Control.Monad (void, unless)
 import           Data.Char (isNumber)
+import           Data.List (nub)
 import           Data.Monoid ((<>))
 import           Text.Read (readMaybe)
+
+-- Imports from 'random'
+import           System.Random (newStdGen, randomRs)
 
 -- Imports from 'bytestring'
 import           Data.ByteString (ByteString)
@@ -61,7 +65,7 @@ import qualified Data.ByteString.Char8 as CBS
 import qualified Data.ByteString.Lazy as LBS
 
 -- Imports from 'exceptions'
-import           Control.Monad.Catch (catch, finally)
+import           Control.Monad.Catch (finally)
 
 -- Imports from 'aeson'
 import           Data.Aeson (FromJSON(..), Value(..), (.:), ToJSON(..), encode, decode, (.=), object,
@@ -81,7 +85,7 @@ import           Data.Digest.Pure.SHA as SHA
 import           System.ZMQ4.Monadic (Socket, ZMQ, runZMQ, socket, Rep(..), Router(..), Pub(..),
                                       Dealer(..), Req(..), Sub(..), Flag(..), send, receive, Receiver,
                                       Sender, lastEndpoint, bind, connect, subscribe, setIdentity,
-                                      restrict, monitor, EventType(..), setLinger, message, close)
+                                      restrict, monitor, EventType(..), setLinger)
 
 -- Imports from 'jupyter'
 import           Jupyter.Messages.Internal (MessageHeader(..), IsMessage(..), Username(..))
@@ -360,33 +364,31 @@ withClientSockets :: Maybe KernelProfile -- ^ Optionally, specify how the ZeroMQ
 withClientSockets mProfile callback = runZMQ $ do
   -- Create the kernel profile to be used. If we need to, find open ports to use.
   profile <- case mProfile of
-    Just p -> return p 
-    Nothing -> do
-      let startPorts = [110730, 111840, 112950, 113160, 114270]
-      ports <- mapM (findOpenPort 100) startPorts
-      case sequence ports of
-        Nothing -> fail "Jupyter.ZeroMQ: Could not find open port in 100 tries!"
-        Just [port1, port2, port3, port4, port5] ->
-          return KernelProfile
-            { profileTransport = TCP
-            , profileIp = "127.0.0.1"
-            , profileHeartbeatPort = port1
-            , profileControlPort = port2
-            , profileShellPort = port3
-            , profileStdinPort = port4
-            , profileIopubPort = port5
-            , profileSignatureKey = ""
-            }
-        Just _ -> fail "Jupyter.ZeroMQ: Too many ports"
+               Just p -> return p
+               Nothing -> do
+                 -- Generate random ports to bind on.
+                 gen <- liftIO newStdGen
+                 let (port1:port2:port3:port4:port5:_) = nub $ randomRs (32768, 61000) gen
+                 return
+                   KernelProfile
+                     { profileTransport = TCP
+                     , profileIp = "127.0.0.1"
+                     , profileHeartbeatPort = port1
+                     , profileControlPort = port2
+                     , profileShellPort = port3
+                     , profileStdinPort = port4
+                     , profileIopubPort = port5
+                     , profileSignatureKey = ""
+                     }
 
   clientHeartbeatSocket <- socket Req
-  clientControlSocket   <- socket Dealer
-  clientShellSocket     <- socket Dealer
-  clientStdinSocket     <- socket Dealer
-  clientIopubSocket     <- socket Sub
+  clientControlSocket <- socket Dealer
+  clientShellSocket <- socket Dealer
+  clientStdinSocket <- socket Dealer
+  clientIopubSocket <- socket Sub
 
-  -- Make sure that we do not accidentally let the client run forever,
-  -- just because there are unsent messages. Shut it down eventually.
+  -- Make sure that we do not accidentally let the client run forever, just because there are unsent
+  -- messages. Shut it down eventually.
   let linger = 300 :: Int
   setLinger (restrict linger) clientHeartbeatSocket
   setLinger (restrict linger) clientControlSocket
@@ -410,7 +412,8 @@ withClientSockets mProfile callback = runZMQ $ do
   -- Once we receive that, we can turn off monitoring. (Passing True listens for an event; False turns
   -- off monitoring.)
   --
-  -- You can't use 'mapM' because the sockets have different types, e.g. Socket z Req vs Socket z Dealer.
+  -- You can't use 'mapM' because the sockets have different types, e.g. Socket z Req vs Socket z
+  -- Dealer.
   monitors <- sequence
                 [ monitor [ConnectedEvent] clientHeartbeatSocket
                 , monitor [ConnectedEvent] clientControlSocket
@@ -428,14 +431,13 @@ withClientSockets mProfile callback = runZMQ $ do
   connect clientStdinSocket (address profileStdinPort)
   connect clientIopubSocket (address profileIopubPort)
 
-  -- Subscribe to all topics on the iopub socket!
-  -- If we don't do this, then no messages get received on it.
+  -- Subscribe to all topics on the iopub socket! If we don't do this, then no messages get received
+  -- on it.
   subscribe clientIopubSocket ""
 
-  -- Ensure that all monitors are closed after we run our action. If we don't,
-  -- ZMQ will not be able to shutdown because the monitor sockets linger.
-  finally (callback profile ClientSockets { .. })
-          (liftIO $ mapM_ ($ False) monitors)
+  -- Ensure that all monitors are closed after we run our action. If we don't, ZMQ will not be able to
+  -- shutdown because the monitor sockets linger.
+  finally (callback profile ClientSockets { .. }) (liftIO $ mapM_ ($ False) monitors)
 
 -- | Compute the address to bind a socket to, given the 'KernelProfile', using the provided tranport
 -- mechanism, IP, and port. If no 'KernelProfile' is provided (and 'Nothing' is passed), then return
@@ -455,24 +457,6 @@ extractAddress mProfile accessor =
     , ":"
     , maybe "*" (show . accessor) mProfile
     ]
-
--- | Find an open port, starting at a given port.
-findOpenPort :: Int -- ^ Number of tries to find a port
-             -> Int -- ^ Initial port to try
-             -> ZMQ z (Maybe Int)
-findOpenPort tries startPort = do
-  sock <- socket Req
-  finally (go sock tries startPort) (close sock)
-
-  where
-    go _ 0 _ = return Nothing
-    go sock triesLeft nextPort =
-      (do
-         bind sock ("tcp://127.0.0.1:" ++ show nextPort)
-         return (Just nextPort)) `catch`
-      (\zmqErr -> if message zmqErr == "Address already in use"
-                    then go sock (triesLeft - 1) (nextPort + 1)
-                    else liftIO (throwIO zmqErr))
 
 -- | Bind a socket to a port.
 --

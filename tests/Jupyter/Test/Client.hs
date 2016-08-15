@@ -2,7 +2,7 @@
 module Jupyter.Test.Client (clientTests) where
 
 -- Imports from 'base'
-import           Control.Exception (throwIO, bracket)
+import           Control.Exception (throwIO)
 import           Control.Monad (forM_, void)
 import           Data.Monoid ((<>))
 import           Control.Concurrent (threadDelay)
@@ -25,7 +25,7 @@ import qualified Data.Text as T
 import           Data.Aeson (ToJSON(..), object, (.=))
 
 -- Imports from 'process'
-import           System.Process (terminateProcess, ProcessHandle)
+import           System.Process (ProcessHandle)
 
 -- Imports from 'jupyter'
 import           Jupyter.Client
@@ -33,14 +33,13 @@ import           Jupyter.Kernel
 import           Jupyter.Messages
 
 import           Jupyter.Test.MessageExchange
-import           Jupyter.Test.Utils (inTempDir, shouldThrow, HandlerException(..))
+import           Jupyter.Test.Utils (shouldThrow, HandlerException(..))
 
 clientTests :: TestTree
 clientTests = testGroup "Client Tests"
                 [ testBasic
                 , testStdin
                 , testCalculator
-                , testClientPortsTaken
                 , testClient
                 , testHandlerExceptions
                 , testFindingKernelspecs
@@ -405,34 +404,6 @@ testHandlerExceptions = testCaseSteps "Client Handler Exceptions" $ \step -> do
 
 defaultKernelOutputHandler :: (Comm -> IO ()) -> KernelOutput -> IO ()
 defaultKernelOutputHandler _ _ = return ()
-
-testClientPortsTaken :: TestTree
-testClientPortsTaken = testCase "Client Ports Taken"  $
-  inTempDir $ \_ ->
-    runClient Nothing Nothing emptyHandler $ \profile1 -> liftIO $
-      bracket (startIPythonKernel profile1) terminateProcess $ const $
-        delay 1000 $ runClient Nothing Nothing emptyHandler $ \profile2 -> liftIO $
-          bracket (startIPythonKernel profile2) terminateProcess $ const $
-            delay 1000 $ runClient Nothing Nothing emptyHandler $ \profile3 -> liftIO $ do
-              1 + profileShellPort profile1     @=? profileShellPort profile2
-              1 + profileHeartbeatPort profile1 @=? profileHeartbeatPort profile2
-              1 + profileControlPort profile1   @=? profileControlPort profile2
-              1 + profileStdinPort profile1     @=? profileStdinPort profile2
-              1 + profileIopubPort profile1     @=? profileIopubPort profile2
-              1 + profileShellPort profile2     @=? profileShellPort profile3
-              1 + profileHeartbeatPort profile2 @=? profileHeartbeatPort profile3
-              1 + profileControlPort profile2   @=? profileControlPort profile3
-              1 + profileStdinPort profile2     @=? profileStdinPort profile3
-              1 + profileIopubPort profile2     @=? profileIopubPort profile3
-    where
-      emptyHandler =
-          ClientHandlers (const . const . return $ InputReply "")
-                         (const . const $ return ())
-                         (const . const $ return ())
-      delay ms act = do
-        threadDelay $ 1000 * ms
-        act
-
 
 -- Test that messages can be sent and received on the heartbeat socket.
 testClient :: TestTree
