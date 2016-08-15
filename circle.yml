@@ -10,20 +10,21 @@ dependencies:
     - export PATH=$HOME/.local/bin:$PATH
     - mkdir -p ~/.local/bin
     - curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
-
     - | 
-        sudo rm -f /usr/bin/asciidoc
-        git clone http://www.github.com/zeromq/zeromq4-1.git libzmq
-        cd libzmq
-        ./autogen.sh
-        ./configure
-        make
-        sudo make install
-
+        if [ ! -d "$HOME/zeromq/lib" ]; then
+            git clone http://www.github.com/zeromq/zeromq4-x.git libzmq
+            mkdir $HOME/zeromq
+            cd libzmq
+            ./autogen.sh
+            ./configure --prefix=$HOME/zeromq
+            make
+            make install
+        fi
     - pip install jupyter ipykernel notebook jupyter_client
 
   override:
     - |
+        export PKG_CONFIG_PATH=$HOME/zeromq/lib/pkgconfig/
         if [[ $CIRCLE_NODE_INDEX -eq 0 ]]; then
             export RESOLVER=lts-6.11
             export PEDANTIC=--pedantic
@@ -37,6 +38,7 @@ dependencies:
         stack --resolver=$RESOLVER build --dependencies-only --test
 
         # Write test.sh for use in the test command
+        echo export LD_LIBRARY_PATH=$HOME/zeromq/lib > test.sh
         echo stack --resolver=$RESOLVER build >> test.sh
         echo stack --resolver=$RESOLVER exec kernel-basic install >> test.sh
         echo stack --resolver=$RESOLVER exec kernel-stdin install >> test.sh

@@ -39,7 +39,7 @@ before_install:
   - |
     if [ ! -d "$HOME/zeromq/lib" ]; then
         export OLDPWD=$(pwd) 
-        travis_retry git clone http://www.github.com/zeromq/zeromq4-1.git libzmq
+        travis_retry git clone http://www.github.com/zeromq/zeromq4-x.git libzmq
         mkdir $HOME/zeromq
         cd libzmq
         travis_retry ./autogen.sh
