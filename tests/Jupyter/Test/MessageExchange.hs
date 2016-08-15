@@ -243,7 +243,7 @@ testMessageExchange name mkKernelCommand validCode mkMessageExchanges = testCase
 -- exception is raised, as it is likely indicative of a deadlock.
 waitForKernelIdle :: MVar [KernelOutput] -> IO ()
 waitForKernelIdle var = do
-  res <- timeout 2000000 wait
+  res <- timeout 5000000 wait
   case res of
     Just _  -> return ()
     Nothing -> fail "Timed out in waitForKernelIdle: deadlock?"
@@ -252,6 +252,7 @@ waitForKernelIdle var = do
     -- Poll the MVar until it has the KernelIdle in it.
     wait = do
       outputs <- readMVar var
+      print outputs
       unless (KernelStatusOutput KernelIdle `elem` outputs) $ do
         threadDelay 100000
         waitForKernelIdle var
