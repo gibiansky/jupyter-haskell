@@ -70,6 +70,5 @@ runKernel profilePath = do
 
   -- Keep track of the current execution using an MVar. In general, kernel state (when it exists)
   -- often needs to be kept in some sort of temporary mutable state.
-  print profile
   execCountVar <- newMVar 1
   serve profile defaultCommHandler $ requestHandler profile execCountVar
