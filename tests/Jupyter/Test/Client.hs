@@ -411,9 +411,9 @@ testClientPortsTaken = testCase "Client Ports Taken"  $
   inTempDir $ \_ ->
     runClient Nothing Nothing emptyHandler $ \profile1 -> liftIO $
       bracket (startIPythonKernel profile1) terminateProcess $ const $
-        delay 500 $ runClient Nothing Nothing emptyHandler $ \profile2 -> liftIO $
+        delay 1000 $ runClient Nothing Nothing emptyHandler $ \profile2 -> liftIO $
           bracket (startIPythonKernel profile2) terminateProcess $ const $
-            delay 500 $ runClient Nothing Nothing emptyHandler $ \profile3 -> liftIO $ do
+            delay 1000 $ runClient Nothing Nothing emptyHandler $ \profile3 -> liftIO $ do
               1 + profileShellPort profile1     @=? profileShellPort profile2
               1 + profileHeartbeatPort profile1 @=? profileHeartbeatPort profile2
               1 + profileControlPort profile1   @=? profileControlPort profile2
