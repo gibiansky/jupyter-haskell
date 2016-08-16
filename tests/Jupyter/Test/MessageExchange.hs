@@ -252,7 +252,6 @@ waitForKernelIdle var = do
     -- Poll the MVar until it has the KernelIdle in it.
     wait = do
       outputs <- readMVar var
-      print outputs
       unless (KernelStatusOutput KernelIdle `elem` outputs) $ do
         threadDelay 100000
         waitForKernelIdle var
