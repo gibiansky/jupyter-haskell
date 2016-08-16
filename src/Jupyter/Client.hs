@@ -92,6 +92,7 @@ module Jupyter.Client (
     ) where
 
 -- Imports from 'base'
+import           Control.Concurrent (threadDelay)
 import           Control.Exception (bracket, catch)
 import           Control.Monad (forever)
 import           Data.Maybe (fromMaybe)
@@ -282,7 +283,13 @@ runClient mProfile mUser clientHandlers client =
 connectKernel :: Client KernelConnection
 connectKernel = do
   ClientState {..} <- ask
-  liftIO $ clientWaitForConnections clientSockets
+  liftIO $ do
+    clientWaitForConnections clientSockets
+
+    -- Sleep to ensure that messages are not dropped due to the ZeroMQ slow joiner problem.
+    -- This is a bit of a hack, but it works.
+    threadDelay 100000
+
   return KernelConnection
 
 -- | Send a 'ClientRequest' to the kernel. Wait for the kernel to reply with a 'KernelReply',
