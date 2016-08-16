@@ -506,6 +506,7 @@ receiveMessage sock = do
   parentHeader <- receive sock
   metadata <- receive sock
   content <- receive sock
+  liftIO $ putStrLn $ "Received: " ++ CBS.unpack content
   return $ parseMessage idents headerData parentHeader metadata content
 
 -- | Read data from the socket until we hit an ending string. Return all data as a list, which does
@@ -588,6 +589,7 @@ sendMessage hmacKey sock header content = do
       signature = hmac $ headerStr <> parentHeaderStr <> metadata <> contentStr
 
   -- Send all pieces of the message.
+  liftIO $ putStrLn $ "Sending: " ++ CBS.unpack contentStr
   mapM_ sendPiece idents
   sendPiece "<IDS|MSG>"
   sendPiece signature
