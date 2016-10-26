@@ -115,15 +115,15 @@ printText expr =
 
 -- | Print an expression as a LaTeX string.
 printLatex :: Expr -> String
-printLatex expr =
-  case expr of
-    Lit i        -> show i
-    Var c        -> [c]
-    Negate e     -> '-' : printLatex e
-    Add a b      -> concat ["(", printLatex a, " + ", printLatex b, ")"]
-    Multiply a b -> concat ["(", printLatex a, " \\cdot ", printLatex b, ")"]
-    Subtract a b -> concat ["(", printLatex a, " - ", printLatex b, ")"]
-    Divide a b   -> concat ["\\frac{", printLatex a, "}{", printLatex b, "}"]
+printLatex expr = "$"++str++"$" where
+  str = case expr of
+          Lit i        -> show i
+          Var c        -> [c]
+          Negate e     -> '-' : printLatex e
+          Add a b      -> concat ["(", printLatex a, " + ", printLatex b, ")"]
+          Multiply a b -> concat ["(", printLatex a, " \\cdot ", printLatex b, ")"]
+          Subtract a b -> concat ["(", printLatex a, " - ", printLatex b, ")"]
+          Divide a b   -> concat ["\\frac{", printLatex a, "}{", printLatex b, "}"]
 
 -- | List of symbols that should be part of autocompletions.
 autocompleteSymbols :: [Text]
