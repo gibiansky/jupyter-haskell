@@ -1300,7 +1300,7 @@ instance ToJSON Comm where
 -- 'displayJavascript', etc, utilities; the 'Monoid' instance can be used to combine 'DisplayData'
 -- values to create values with multiple possible representations.
 newtype DisplayData = DisplayData (Map MimeType Text)
-  deriving (Eq, Ord, Show, Monoid)
+  deriving (Eq, Ord, Show, Semigroup, Monoid)
 
 -- | Create a @text/plain@ 'DisplayData' bundle out of a bit of 'Text'.
 displayPlain :: Text -> DisplayData
