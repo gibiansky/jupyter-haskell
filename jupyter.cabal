@@ -1,5 +1,5 @@
 name:                jupyter
-version:             0.9.0
+version:             0.9.1
 synopsis:            A library for creating and using Jupyter kernels.
 
 description:         An implementation of the Jupyter messaging protocol, used to implement Jupyter kernels in Haskell or communicate with existing Jupyter kernels via the messaging protocol.

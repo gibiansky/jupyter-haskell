@@ -66,6 +66,7 @@ A more detailed example is provided in the
 directory, and more information about the client and kernel interfaces can be found on the @jupyter@
 <https://github.com/gibiansky/jupyter-haskell README>.
 -}
+
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
@@ -96,6 +97,7 @@ import           Control.Concurrent (threadDelay)
 import           Control.Exception (bracket, catch)
 import           Control.Monad (forever)
 import           Data.Maybe (fromMaybe)
+import           Control.Monad.Fail (MonadFail)
 
 -- Imports from 'bytestring'
 import           Data.ByteString (ByteString)
@@ -145,7 +147,7 @@ data ClientState = forall z.
 -- Use 'sendClientRequest' and 'sendClientComm' to construct 'Client' values, the 'Monad' interface to
 -- manipulate them, and 'runClient' to supply all needed connection info and run the action.
 newtype Client a = Client { unClient :: ReaderT ClientState IO a }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadReader ClientState, MonadThrow, MonadCatch, MonadMask)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadReader ClientState, MonadThrow, MonadCatch, MonadMask, MonadFail)
 
 -- | A connection to a kernel from a client.
 --
