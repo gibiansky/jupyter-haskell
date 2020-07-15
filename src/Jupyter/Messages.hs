@@ -364,7 +364,7 @@ data ExecuteOptions =
          --
          -- Kernels should avoid broadcasting on the /iopub/ channel (sending 'KernelOutput' messages) and
          -- the 'ExecuteReply' message will not be sent when 'executeSilent' is @True@. In addition, kernels
-         -- should act as if 'executeStoreHistory' is set to @True@ whenever 'executeSilent' is @True@.
+         -- should act as if 'executeStoreHistory' is set to @False@ whenever 'executeSilent' is @True@.
          , executeStoreHistory :: Bool
          -- ^ A boolean flag which, if @True@, signals the kernel to populate its history. If 'executeSilent'
          -- is @True@, kernels should ignore the value of this flag and treat it as @False@.
